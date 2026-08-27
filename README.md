@@ -17,6 +17,48 @@ npm run build
 
 Open the local URL printed by the development server. The app uses React, TypeScript and the Sites/vinext runtime. Runtime room data stays in the browser; there is no LLM service, furniture-commerce API, or remote room database. Fonts use a Google Fonts CSS import with local fallbacks.
 
+## Live demo and how to test it
+
+**https://floortris.floortris.workers.dev**
+
+WebMCP is behind a flag in Chrome today. Without it `document.modelContext` does
+not exist, the page says so plainly, and every human editing feature still works —
+but no tools can be discovered. To see the agent side you need one of:
+
+- **ChatGPT's in-app browser**, or
+- **Google Chrome** with `chrome://flags/#enable-webmcp-testing` set to Enabled, then relaunch.
+
+Once enabled, open the live URL and the tools panel (the `?` button on the board)
+reports how many native tools registered. An agent can then call any of the 14.
+
+### Automated native check
+
+`npm test` exercises the command store directly. To exercise the real WebMCP
+transport in a real browser instead:
+
+```sh
+npm i -D playwright-core
+npm run test:native                                    # against localhost:3001
+npm run test:native -- https://floortris.floortris.workers.dev/
+```
+
+It launches Chrome with the required flags, asserts all 14 tools register and
+carry annotations, then runs a multi-turn journey through
+`document.modelContext.executeTool`: read state, open a draft, plan a layout,
+re-check it, and confirm a stale revision is refused and the locked owned sofa
+never moved.
+
+The native call contract, for anyone writing their own client:
+
+```js
+const tool = (await document.modelContext.getTools()).find(t => t.name === 'getRoomState');
+const payload = JSON.parse(await document.modelContext.executeTool(tool, JSON.stringify({ which: 'current' })));
+```
+
+`executeTool` takes a `RegisteredTool` and a JSON **string**, and resolves to a
+JSON string. Passing a tool name, a plain object, or `{arguments: ...}` fails with
+`Failed to parse input arguments`.
+
 ## Source and verification
 
 - `app/`: application entry and site metadata; `middleware.ts` supplies the platform-routed request origin for absolute social-card URLs, without trusting forwarded host headers.
@@ -25,7 +67,7 @@ Open the local URL printed by the development server. The app uses React, TypeSc
 - `components/floortris/schemas.ts`, `store.ts`, `webmcp.ts`: strict tool schemas, authoritative commands, and native registration.
 - Four test files in `components/floortris/`: 45 automated tests, combining the builder's 23 checks and 22 independently written acceptance/contract/adapter checks.
 
-The initial integrated build passed all 45 tests, TypeScript checking and production compilation. Native discovery of all 14 tools and a native `getRoomState` call were verified in the local in-app browser; a creation attempt correctly refused to overwrite an existing human draft. Unit tests of the registration adapter use a controlled test double and are separate from that real browser evidence. Successful cross-client agent journeys still need target-browser testing.
+The initial integrated build passed all 52 tests, TypeScript checking and production compilation. Native discovery of all 14 tools and a native `getRoomState` call were verified in the local in-app browser; a creation attempt correctly refused to overwrite an existing human draft. Unit tests of the registration adapter use a controlled test double and are separate from that real browser evidence. Successful cross-client agent journeys still need target-browser testing.
 
 An optional `store` prop on `FloortrisApp` supports isolated integration fixtures. `createStore` is independent of React. The default store is local to the mounted application; saved browser data is loaded after hydration.
 
@@ -57,6 +99,7 @@ Human-only methods, **not registered tools**:
 - `humanUpdate(which, objectId, patch)`; `humanAdd(which, variantId)`; `humanRemove(which, objectId)`
 - `humanAddOwned({label, kind, sizeCm})`: adds a measured, required owned floor piece to Yours.
 - `humanMeasureOwned(id, sizeCm)`; `humanSetLocks(id, locks)`; `humanSetRequired(id, boolean)`
+- `humanSetRoomFinish(which, 'wall' | 'floor', paletteId)`: the human equivalent of `setAppearance` for room finishes.
 - `applyProposal(proposalId, exactReviewedRevision)`
 - `confirmSetup(proposalId, exactReviewedRevision)`
 - `discardProposal()`; `resetDemo()`
@@ -114,9 +157,38 @@ The provided demo takes **four checked placements**: wall TV, compact desk, low 
 - Fixed radiator projection and its 20 cm front assumption are separate masks. **The primary fixture radiator is not editable through this V1 UI or setup tools**. Changing to a smaller room may expose its out-of-room conflict; the UI discloses this fixed demo feature. A general fixed-equipment editor is a remaining product limitation.
 - Rectangular rooms only, up to 1000 × 1000 cm, 12 openings and 30 movable pieces. 20 cm cells are fixed. Quarter turns only. No chimney/cutout editor, multi-room layout, stairs or diagonal paths.
 - Storage uses a front rectangle, not a modelled articulated door. Bed long-side clearance is a secondary simple check; it cannot bypass the hard walking footprint.
-- Furniture appearance is editable in the human inspector. Wall/floor palette changes are implemented through `setAppearance` on layout proposals; this V1 human interface does not yet expose dedicated room-finish controls.
+- Furniture appearance is editable in the human inspector. Wall and floor finishes are editable there too, in the room panel shown when no piece is selected, through the same palette IDs `setAppearance` accepts. Appearance never changes geometry, height classes or rule flags, but it does advance the revision a reviewer must have seen before Apply.
 - A stale draft must be discarded and recreated. There is no automatic rebase. Only one active setup/layout draft is supported at once. There is no undo history.
 - Native calls have no backend, no secrets, no external APIs or real purchasing. The UI's local planner is deterministic page code and is labelled that way, never an external agent conversation.
 - Room data is saved transparently in `localStorage` under `floortris.v1.local`. Export downloads JSON. There is no import UI or cloud synchronization. Creation/placement idempotency cache is session-local and bounded to 100 requests; it does not survive page reload.
 
 These are product planning assumptions, not accessibility certification, building/fire regulation advice, radiator safety guidance, sunlight analysis or a surveyed real room.
+
+## Board-first UI overhaul
+
+The default workspace is the grid and a compact furniture dock. Pieces, Room and
+Agent tools open one panel at a time; selecting a piece reveals a slim inspector.
+Position fields are under the collapsed **Exact** section.
+
+- Drag an existing piece to a 20 cm snap cell; the shared rule engine previews
+  conflicts with hatched tiles and a rule-code label. Invalid existing moves are
+  retained for visible repair. A gesture based on an intervening edit is refused.
+- Use arrows to nudge one cell, Shift+arrow for five, and R to rotate. Pins and
+  rotation buttons sit on the selected piece. Owned locks are changed in Yours;
+  proposal-only catalogue pieces can also be pinned by the human.
+- Catalogue corner handles select only named variants, never invented dimensions.
+  Owned furniture has no resize handle.
+- Drag a catalogue piece from the dock or Pieces drawer. TVs snap to wall cells;
+  other pieces snap to the floor. New drops with relevant hard failures are
+  refused atomically. Tap-to-add remains available, including on touch devices.
+- Furniture / Height / Walk / TV / Doors are separate overlays, using patterns
+  and labels. A native tool returning a blocked/unknown TV issue briefly shows
+  the TV overlay and leaves an alert badge without changing the selected view.
+- The proposal strip contains Try, status, View, Apply and Discard. Find placements
+  displays checked, clickable ghosts; their exact candidate revisions are retained.
+- Compare shows two boards side by side, with horizontal scrolling on small screens.
+
+These changes retain the engine and the 14-tool schema. The optional native-result
+observer cannot change a command result if a UI notification fails. Room data
+continues to use the original local-storage format. No import, undo or general
+fixed-fixture editor was added in this UI pass.

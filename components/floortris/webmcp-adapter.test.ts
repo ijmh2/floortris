@@ -15,10 +15,11 @@ test('adapter awaits registration and its handlers share the real command store 
   const store=createStore();const tools=new Map<string,{execute:(args:Record<string,unknown>,options?:{signal?:AbortSignal})=>Promise<unknown>}>();
   const signals:AbortSignal[]=[];const statuses:WebMCPState[]=[];
   const host={modelContext:{registerTool:async(tool:{name:string;execute:(args:Record<string,unknown>,options?:{signal?:AbortSignal})=>Promise<unknown>},options:{signal:AbortSignal})=>{await Promise.resolve();tools.set(tool.name,tool);signals.push(options.signal);}}};
-  const dispose=registerFloortrisTools(store,s=>statuses.push(s),host as unknown as Document);
+  const observations:unknown[]=[];
+  const dispose=registerFloortrisTools(store,s=>statuses.push(s),host as unknown as Document,r=>{observations.push(r);throw new Error('broken optional UI observer');});
   assert.equal(statuses.at(-1)?.state,'checking');await tick();assert.equal(statuses.at(-1)?.state,'registered');assert.equal(tools.size,14);
   const current=store.getState();const result=await tools.get('createProposal')!.execute({kind:'layout',expectedCurrentRevision:current.currentRevision,expectedRuleRevision:current.ruleRevision,idempotencyKey:'adapter-create'}) as {operationSucceeded:boolean};
-  assert.equal(result.operationSucceeded,true);assert.ok(store.getState().proposal);
+  assert.equal(result.operationSucceeded,true);assert.ok(store.getState().proposal);assert.deepEqual(observations,[result]);
   const before=JSON.stringify(store.getState());const ac=new AbortController();ac.abort();
   const cancelled=await tools.get('proposeLayout')!.execute({proposalId:store.getState().proposal!.id,revision:store.getState().proposal!.revision},{signal:ac.signal}) as {operationSucceeded:boolean};
   assert.equal(cancelled.operationSucceeded,false);assert.equal(JSON.stringify(store.getState()),before);

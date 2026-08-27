@@ -2,6 +2,7 @@
   "name": "floortris",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -9,9 +10,10 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .wrangler",
     "test": "node --import tsx --test components/floortris/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:native": "node scripts/native-check.mjs"
   },
   "dependencies": {
     "next": "16.3.3",
@@ -34,7 +36,8 @@
     "typescript": "5.9.3",
     "vinext": "1.0.0-beta.8",
     "vite": "8.2.2",
-    "wrangler": "4.127.0"
+    "wrangler": "4.127.0",
+    "playwright-core": "^1.62.1"
   },
   "type": "module"
 }
