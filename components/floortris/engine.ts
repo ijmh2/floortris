@@ -205,6 +205,11 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       if (faces[o.rotation] === 'south') target.y = Math.ceil(target.y / unit) * unit;
       if (faces[o.rotation] === 'east') target.x = Math.ceil(target.x / unit) * unit;
       addZone(`${o.kind}:${o.id}`, o.id, `${o.label} ${o.kind === 'desk' ? 'chair approach' : 'front'}`, target, o.tags.includes('bedside'));
+      if (o.tags.includes('bedside')) {
+        const b = bounds(o, unit), beds = layout.furniture.filter(f => f.kind === 'bed');
+        const nearHead = beds.some(bed => bedAccessBands(bed, Math.max(depth, b.w, b.d), 60, unit).some(({ headExcluded: h }) => b.x < h.x + h.w && b.x + b.w > h.x && b.y < h.y + h.d && b.y + b.d > h.y));
+        if (!nearHead) issue('prefer_bedside_near_bed', `${o.label} is not beside a bed head. Keep the head-end table separate from the required side entry.`, [o.id], rectCells(b, unit), 'warning', ['bedside_not_at_head']);
+      }
       if (o.tags.includes('bedside') && !zones.at(-1)!.reachable) issue('bedside_route_conflict', `${o.label} drawer/front approach conflicts with the entrance route.`, [o.id], at, 'warning');
       if (o.kind === 'desk' && rules.deskNearWindow) {
         const b = bounds(o, unit), cx = b.x + b.w / 2, cy = b.y + b.d / 2;

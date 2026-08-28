@@ -141,3 +141,17 @@ test('owned storage classifications and conceptual markers survive report genera
   const state = makeDemo(); state.room.fixtures[0].conceptualOnly = true;
   assert.equal(validate(state.current, state.room, state.rules, state.inventory).conceptualOnly, true);
 });
+
+test('bedside relationship follows the bed head for every rotation', () => {
+  for (const rotation of [0,90,180,270] as const) {
+    const state=makeDemo();state.room.fixtures=[];state.inventory=[];
+    const bed=fromVariant('haven-double-140','relationship-bed');bed.originCell={x:10,y:10};bed.rotation=rotation;
+    const bedside=fromVariant('nook-bedside-40','relationship-table');
+    const h=bedAccessBands(bed,60)[0].headExcluded;
+    bedside.originCell={x:h.x/20,y:h.y/20};
+    state.current.furniture=[bed,bedside];
+    assert.equal(validate(state.current,state.room,state.rules,[]).issues.some(i=>i.code==='prefer_bedside_near_bed'),false);
+    bedside.originCell={x:0,y:0};
+    assert.equal(validate(state.current,state.room,state.rules,[]).issues.some(i=>i.code==='prefer_bedside_near_bed'),true);
+  }
+});
