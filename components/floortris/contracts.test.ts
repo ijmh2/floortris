@@ -242,3 +242,48 @@ test('proposal pins protect new catalogue pieces while owned lock authority rema
   assert.notEqual(editStamp(store.getState(),'proposal'),stamp);
   assert.equal(store.humanSetLocks(id,{position:true},'proposal').error?.code,'stale_proposal');
 });
+
+test('the tool log records every native call, including refusals, without leaking arguments',async()=>{
+  const store=createStore();
+  assert.deepEqual(store.getToolLog(),[],'starts empty');
+
+  const s=store.getState();
+  await store.execute('getRoomState',{which:'current'});
+  await store.execute('createProposal',{kind:'layout',expectedCurrentRevision:s.currentRevision,expectedRuleRevision:s.ruleRevision,idempotencyKey:'log-test'});
+  const p=store.getState().proposal!;
+  // A deliberate refusal: the log must show what the page rejected, not hide it.
+  await store.execute('updateFurniture',{proposalId:p.id,revision:999,objectId:'owned-sofa',rotation:90});
+
+  const log=store.getToolLog();
+  assert.equal(log.length,3);
+  assert.deepEqual(log.map(e=>e.name),['updateFurniture','createProposal','getRoomState'],'newest first');
+
+  const refused=log[0];
+  assert.equal(refused.ok,false);
+  assert.equal(refused.errorCode,'revision_conflict');
+  assert.equal(refused.readOnly,false);
+
+  const read=log[2];
+  assert.equal(read.ok,true);
+  assert.equal(read.readOnly,true,'getRoomState is annotated read-only');
+  assert.equal(read.args,'which=current');
+
+  for(const e of log){
+    assert.ok(Number.isInteger(e.seq)&&e.seq>0);
+    assert.ok(e.ms>=0);
+    assert.ok(e.args.length<=120,'argument summary stays short');
+    assert.ok(!e.args.includes('idempotencyKey'),'opaque keys are not echoed');
+  }
+  assert.ok(log[0].seq>log[1].seq&&log[1].seq>log[2].seq,'sequence increases');
+});
+
+test('the tool log is bounded and read-only calls still notify subscribers',async()=>{
+  const store=createStore();
+  let notifications=0;
+  const stop=store.subscribe(()=>{notifications++;});
+  for(let i=0;i<65;i++) await store.execute('listCatalogue',{});
+  stop();
+  assert.equal(store.getToolLog().length,60,'log is capped');
+  assert.ok(notifications>=65,'a read-only call still wakes the UI so the feed updates');
+  assert.equal(store.getToolLog()[0].seq,65,'newest entry is the last call');
+});

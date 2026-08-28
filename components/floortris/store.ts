@@ -1,6 +1,6 @@
 import { CATALOGUE, DEFAULT_RULES, PALETTES, fromVariant, makeDemo } from './data.ts';
 import { bedAccessBands, bounds, frontBand, rectCells, validate } from './engine.ts';
-import { clone, faces, rotations, type AppState, type Candidate, type CommandResult, type Furniture, type Layout, type Proposal, type Report, type Room, type Rules } from './model.ts';
+import { clone, faces, rotations, type AppState, type ToolLogEntry, type Candidate, type CommandResult, type Furniture, type Layout, type Proposal, type Report, type Room, type Rules } from './model.ts';
 import { TOOL_SCHEMAS, validateSchema } from './schemas.ts';
 import { roomEditStamp, validateRoomInputs } from './room-inputs.ts';
 import { profileRules } from './samples.ts';
@@ -40,6 +40,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   let state = frozen(migrateState(initialState));
   let generating = false;
   const documents = new Map<string, AppState>([[documentId(state), state]]);
+  let toolSeq = 0;
   const listeners = new Set<() => void>(), candidates = new Map<string, Candidate>(), retries = new Map<string, { signature: string; result: CommandResult }>();
   const candidateReports = new Map<string, Report>();
   let candidateSeq = 0;
@@ -208,7 +209,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (a.which === 'current') { if (a.revision !== undefined && a.revision !== state.currentRevision) fail('revision_conflict', 'Current has changed.'); return { layout: state.current, room: state.room, rules: state.rules, revision: state.currentRevision, which: 'current' }; }
     const p = state.proposal || fail('proposal_not_found', 'No proposal exists yet.'); if (a.revision !== undefined && a.revision !== p.revision) fail('revision_conflict', 'Proposal has changed.'); return { layout: p.layout, room: p.room, rules: p.rules, revision: p.revision, which: 'proposal' };
   };
-  async function execute(name: string, a: Args, signal?: AbortSignal): Promise<CommandResult> {
+  async function runTool(name: string, a: Args, signal?: AbortSignal): Promise<CommandResult> {
     try {
       const definition = TOOL_SCHEMAS[name] || fail('unknown_tool', 'Unknown Floortris tool.');
       const error = validateSchema(a, definition.inputSchema); if (error) fail('invalid_arguments', error);
@@ -355,6 +356,47 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       return clone(result);
     } catch (error) { return rejection(error); }
   }
+
+  /**
+   * A bounded, human-readable record of every tool call. WebMCP is invisible by
+   * nature: an agent mutates the document and the furniture simply moves. This
+   * is what lets a person watch the protocol work, including the refusals that
+   * prove the page is the referee.
+   */
+  const toolLog: ToolLogEntry[] = [];
+  const getToolLog = () => toolLog;
+  /** Arguments are agent-supplied; keep only short, non-sensitive identifiers. */
+  const summarise = (a: Args): string => {
+    const parts: string[] = [];
+    for (const k of ['which', 'kind', 'objectId', 'ownedId', 'variantId', 'target', 'paletteId']) {
+      const v = a?.[k];
+      if (typeof v === 'string' && v.length <= 40) parts.push(`${k}=${v}`);
+    }
+    return parts.slice(0, 3).join(' ');
+  };
+  async function execute(name: string, a: Args, signal?: AbortSignal): Promise<CommandResult> {
+    const startedAt = Date.now();
+    const result = await runTool(name, a, signal);
+    const validation = result.validation as { status?: string; hardFailures?: number } | undefined;
+    toolLog.unshift({
+      seq: ++toolSeq,
+      at: startedAt,
+      ms: Date.now() - startedAt,
+      name,
+      args: summarise(a),
+      ok: result.operationSucceeded === true,
+      errorCode: (result.error as { code?: string } | undefined)?.code,
+      revision: typeof result.revision === 'number' ? result.revision : undefined,
+      status: typeof result.status === 'string' ? result.status : undefined,
+      validationStatus: validation?.status,
+      hardFailures: validation?.hardFailures,
+      readOnly: TOOL_SCHEMAS[name]?.readOnly === true,
+    });
+    if (toolLog.length > 60) toolLog.length = 60;
+    listeners.forEach(listener => listener());
+    return result;
+  }
+
   const human = (fn: () => CommandResult): CommandResult => { try { return fn(); } catch (error) { return rejection(error); } };
   const undo = () => human(() => {
     const previous = past.pop() || fail('history_empty', 'Nothing to undo in this session.');
@@ -472,6 +514,6 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     return envelope(p, { message: 'Room inputs staged. Review and confirm to update Yours.' });
   });
   const resetDemo = (initial: AppState = makeDemo()) => { publish(restored({ ...initial, documentId: state.documentId })); };
-  return { getState, getDocuments, getHistory, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, applyProposal, confirmSetup, discardProposal, resetDemo };
+  return { getState, getDocuments, getHistory, getToolLog, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, applyProposal, confirmSetup, discardProposal, resetDemo };
 }
 export type FloortrisStore = ReturnType<typeof createStore>;
