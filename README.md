@@ -2,6 +2,26 @@
 
 A working room planner people and agents share. The page owns the rule engine; native WebMCP tools edit a visible proposal, and the human controls Apply and room-input confirmation.
 
+## Agent entry point
+
+The first viewport and initial HTML explicitly direct agents to native WebMCP:
+`generateRoom` → Proposal → human review. `/agent-guide` explains discovery in the
+human's existing planner tab, exact centimetre inputs, verification, existing-room
+edits, and local-only room links. It does not register tools itself or invent a
+runtime-specific discovery command. Read the tool schema on the planner tab.
+
+All registered tool descriptions repeat the human approval boundary. Generation
+returns a `review` record with `applied: false`, `requiresHumanApply: true`, and a
+revision-bound `checkLayout` call. Agents should verify the visible room and report
+warnings/omissions, then leave it in Proposal. If the runtime cannot invoke native
+WebMCP, report the blocker and stop room edits; do not silently use the manual
+planner or claim tool execution. Manual editing remains available to people.
+
+Page guidance is not a security boundary: it cannot equip an unsupported runtime
+with WebMCP or prove the human can see an isolated browser session. The registration
+badge says only that this page registered its tools. Saved room URLs select local
+documents; they do not transfer data across browsers or devices.
+
 ## Run locally
 
 Use Node 22.13+ and npm. From this directory:

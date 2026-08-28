@@ -265,7 +265,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           documents.set(documentId(previous), previous); documents.set(id, frozen(next));
           past.length = 0; future.length = 0;
           publish(next, false);
-          result = envelope(next.proposal!, { documentId: id, room: clone(room), generatedRoom: true, selectedView: 'proposal', previousRoom: { documentId: documentId(previous), name: previous.room.name, preserved: true }, planner: planned.planner, message: 'New room proposal opened. Your previous room and draft are saved in Rooms. Review before Apply.' });
+          result = envelope(next.proposal!, { documentId: id, room: clone(room), generatedRoom: true, selectedView: 'proposal', previousRoom: { documentId: documentId(previous), name: previous.room.name, preserved: true }, planner: planned.planner, review: { state: 'proposal_only', applied: false, requiresHumanApply: true, storageScope: 'this_browser', check: { tool: 'checkLayout', args: { which: 'proposal', revision: next.proposal!.revision } } }, message: 'New room proposal opened in this browser. Furniture is not applied. Verify the visible proposal, report any warnings or omissions, and leave Apply to the human. Your previous room and draft are saved in Rooms.' });
         } finally { generating = false; }
       } else if (name === 'createProposal') {
         if (state.proposal) fail('active_proposal_exists', 'A draft already exists for this room. Use generateRoom to create a separate new room without discarding it. Only the human can discard or apply this room’s draft.');
