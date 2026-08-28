@@ -2,7 +2,7 @@ import { TOOL_SCHEMAS } from './schemas.ts';
 import type { CommandResult } from './model.ts';
 import type { FloortrisStore } from './store.ts';
 export type WebMCPState = { state: 'checking' | 'unsupported' | 'registered' | 'error'; count: number; message: string };
-type NativeContext = { registerTool: (tool: { name: string; description: string; inputSchema: unknown; annotations: { readOnlyHint: boolean; untrustedContentHint: boolean }; execute: (args: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<unknown> }, options?: { signal?: AbortSignal }) => Promise<void> | void };
+type NativeContext = { registerTool: (tool: { name: string; title?: string; description: string; inputSchema: unknown; annotations: { readOnlyHint: boolean; untrustedContentHint: boolean }; execute: (args: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<unknown> }, options?: { signal?: AbortSignal }) => Promise<void> | void };
 /** Native draft API, 26 August 2026. No shim or navigator fallback is installed. */
 export function registerFloortrisTools(store: FloortrisStore, onStatus: (status: WebMCPState) => void, hostDocument: Document = document, onToolResult?: (result: CommandResult) => void) {
   const native = (hostDocument as Document & { modelContext?: NativeContext }).modelContext;
@@ -14,7 +14,7 @@ export function registerFloortrisTools(store: FloortrisStore, onStatus: (status:
     try {
       for (const [name, spec] of Object.entries(TOOL_SCHEMAS)) {
         if (disposed) return;
-        await native.registerTool({ name, description: spec.description, inputSchema: spec.inputSchema, annotations: { readOnlyHint: spec.readOnly, untrustedContentHint: true }, execute: async (args, options) => { const result = await store.execute(name, args, options?.signal); if (!disposed) { try { onToolResult?.(result); } catch { /* UI notification must never change an authoritative tool result. */ } } return result; } }, { signal: controller.signal });
+        await native.registerTool({ name, title: spec.title, description: spec.description, inputSchema: spec.inputSchema, annotations: { readOnlyHint: spec.readOnly, untrustedContentHint: true }, execute: async (args, options) => { const result = await store.execute(name, args, options?.signal); if (!disposed) { try { onToolResult?.(result); } catch { /* UI notification must never change an authoritative tool result. */ } } return result; } }, { signal: controller.signal });
         count++;
       }
       if (!disposed) onStatus({ state: 'registered', count, message: `${count} native document tools registered. Registration is verified; external agent discovery and execution are not implied.` });
