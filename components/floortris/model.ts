@@ -28,7 +28,10 @@ export type Omission = { objectId?: string; variantId?: string; reason: string; 
 export type Proposal = { id: string; kind: 'layout' | 'setup'; revision: number; baseCurrentRevision: number; baseRuleRevision: number; layout: Layout; room: Room; rules: Rules; omitted: Omission[] };
 export type AppState = { version: 1 | 2; documentId?: string; currentRevision: number; ruleRevision: number; current: Layout; room: Room; rules: Rules; inventory: Furniture[]; proposal: Proposal | null; sequence: number };
 export type HeightClass = 'FREE' | 'LOW' | 'TALL' | 'UNKNOWN_HEIGHT';
-export type Issue = { code: string; severity: 'block' | 'warning' | 'info'; message: string; objectIds: string[]; cells: Cell[]; flags: string[]; destinationId?: string; configuredWalkHardCm?: number };
+/** Checked repair or bounded-search suggestion. The store binds active proposal
+ *  authority before exposing it as an executable native tool call. */
+export type IssueFix = { tool: string; args: Record<string, unknown>; summary: string };
+export type Issue = { code: string; severity: 'block' | 'warning' | 'info'; message: string; objectIds: string[]; cells: Cell[]; flags: string[]; destinationId?: string; configuredWalkHardCm?: number; fix?: IssueFix };
 export type GridCell = Cell & { heightClass: HeightClass; objectIds: string[]; flags: string[] };
 export type Rect = { x: number; y: number; w: number; d: number };
 export type ActivityZone = { id: string; objectId: string; label: string; rect: Rect; reachable: boolean; preferredReachable: boolean; cells: Cell[]; purpose?: string };

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { clone } from './model.ts';
 import assert from 'node:assert/strict';
 import { createStore } from './store.ts';
 import { validate } from './engine.ts';
@@ -286,4 +287,75 @@ test('the tool log is bounded and read-only calls still notify subscribers',asyn
   assert.equal(store.getToolLog().length,60,'log is capped');
   assert.ok(notifications>=65,'a read-only call still wakes the UI so the feed updates');
   assert.equal(store.getToolLog()[0].seq,65,'newest entry is the last call');
+});
+
+// End-to-end repair contracts: use returned native arguments without adding tokens.
+async function repairRoom() {
+  const { makeBedroomDouble } = await import('./samples.ts');
+  const state=makeBedroomDouble(); state.room.widthCm=600; state.room.depthCm=600;
+  state.room.profile={kind:'bedroom',sleeping:'double',workspace:false,storage:false};
+  state.rules.requiredKinds=['bed'];
+  state.proposal!.room=clone(state.room); state.proposal!.rules=clone(state.rules);
+  const bed=fromVariant('haven-double-140','repair-bed'); bed.originCell={x:0,y:10};
+  state.proposal!.layout.furniture=[bed];
+  return state;
+}
+
+test('direct repair calls include active authority and pass the full engine',async()=>{
+  const state=await repairRoom(), store=createStore(state);
+  const report=await store.execute('checkLayout',{which:'proposal',detail:'issues'});
+  const issues=report.issues as import('./model.ts').Issue[];
+  const fix=issues.find(i=>i.code==='bed_head_wall')!.fix!;
+  assert.equal(fix.tool,'updateFurniture');
+  assert.equal(fix.args.proposalId,state.proposal!.id);
+  assert.equal(fix.args.revision,state.proposal!.revision);
+  const result=await store.execute(fix.tool,fix.args);
+  assert.equal(result.operationSucceeded,true,JSON.stringify(result));
+  assert.equal((result.validation as {hardFailures:number}).hardFailures,0);
+  assert.equal((result.issues as import('./model.ts').Issue[]).some(i=>i.code==='bed_head_wall'),false);
+  const stale=await store.execute(fix.tool,fix.args);
+  assert.equal(stale.error?.code,'revision_conflict');
+});
+
+test('repair rotations never introduce collisions or out-of-bounds footprints',async()=>{
+  for(const mode of ['collision','bounds']) {
+    const state=await repairRoom(), p=state.proposal!;
+    if(mode==='collision') { const plant=fromVariant('fern-40','repair-plant');plant.originCell={x:8,y:10};p.layout.furniture.push(plant); }
+    else p.layout.furniture[0].originCell={x:23,y:20};
+    const before=validate(p.layout,p.room,p.rules,state.inventory);
+    assert.equal(before.validation.hardFailures,0,JSON.stringify(before.issues));
+    const store=createStore(state), report=await store.execute('checkLayout',{which:'proposal',detail:'issues'});
+    const fix=(report.issues as import('./model.ts').Issue[]).find(i=>i.code==='bed_head_wall')!.fix!;
+    assert.equal(fix.tool,'findPlacements',mode);
+    const snapshot=clone(store.getState());
+    assert.equal((await store.execute(fix.tool,fix.args)).operationSucceeded,true);
+    assert.deepEqual(store.getState(),snapshot,'unsafe direct rotation is replaced by a read-only search');
+  }
+});
+
+test('repair moves check window envelopes and owned locks, not just solid overlaps',async()=>{
+  const state=await repairRoom(), p=state.proposal!;
+  const bed=fromVariant('haven-king-160','repair-bed');bed.originCell={x:15,y:1};
+  p.layout.furniture=[bed];p.room.profile={kind:'bedroom',sleeping:'king',workspace:false,storage:false};
+  p.room.openings.push({id:'head-window',kind:'window',wall:'north',offsetCm:300,widthCm:160,sillCm:95,headCm:215,type:'fixed',windowAccess:false});
+  const report=validate(p.layout,p.room,p.rules,state.inventory);
+  assert.equal(report.validation.hardFailures,0,JSON.stringify(report.issues));
+  assert.equal(report.issues.find(i=>i.code==='prefer_flush_to_wall')!.fix!.tool,'findPlacements');
+  p.room.openings=p.room.openings.filter(o=>o.id!=='head-window');
+  bed.ownership='owned';bed.locked={position:true,rotation:true,size:true};state.inventory=[clone(bed)];
+  const locked=validate(p.layout,p.room,p.rules,state.inventory);
+  assert.equal(locked.issues.find(i=>i.code==='prefer_flush_to_wall')!.fix,undefined);
+});
+
+test('current, setup, and stale reports never offer a mutation against another draft',async()=>{
+  const state=await repairRoom();state.current=clone(state.proposal!.layout);
+  const store=createStore(state);
+  const current=await store.execute('checkLayout',{which:'current',detail:'issues'});
+  assert.ok((current.issues as import('./model.ts').Issue[]).length>0);
+  assert.ok((current.issues as import('./model.ts').Issue[]).every(i=>!i.fix));
+  for(const variant of ['setup','stale']) {
+    const s=clone(state);if(variant==='setup')s.proposal!.kind='setup';else s.currentRevision++;
+    const report=await createStore(s).execute('checkLayout',{which:'proposal',detail:'issues'});
+    assert.ok((report.issues as import('./model.ts').Issue[]).every(i=>!i.fix));
+  }
 });

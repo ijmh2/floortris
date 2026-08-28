@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { CATALOGUE, PALETTES } from './data.ts';
 import { roomSession } from './samples.ts';
-import { documentId, loadWorkspaceRoom, saveWorkspaceRoom } from './persistence.ts';
+import { documentId, loadWorkspaceRoom, readWorkspace, saveWorkspaceRoom } from './persistence.ts';
 import { bounds, validate, wallBand } from './engine.ts';
 import { faces, type AppState, type Candidate, type CommandResult, type Furniture, type Layout, type Report, type Room, type Rules, type Wall, type Rotation, type Cell } from './model.ts';
 import { createStore, proposalStatus, type FloortrisStore } from './store.ts';
@@ -28,6 +28,13 @@ function loadState(session: ReturnType<typeof roomSession>): AppState {
   try { const saved = loadWorkspaceRoom(localStorage, session.storageKey, new URLSearchParams(window.location.search).get('room')); if (saved) return saved; } catch { /* Storage may be unavailable in private browsing. */ }
   return session.makeInitial();
 }
+/** The URL mirrors the open sample library and room; it never drives navigation. */
+function syncSampleUrl(sample: string, roomId?: string) {
+  const url = new URL(window.location.href);
+  if (roomId) url.searchParams.set('room', roomId);
+  if (sample === 'local') url.searchParams.delete('sample'); else url.searchParams.set('sample', sample);
+  window.history.replaceState(null, '', url);
+}
 function Brand() { return <div className="ft-brand"><span className="ft-brandmark"><i /><i /><i /><i /><i /></span><span>floortris<span className="ft-brand-dot">.</span></span></div>; }
 function Shape({ item, small = false }: { item: Furniture | { kind: string; appearance?: string; rotation?: number }; small?: boolean }) {
   return <div className={`ft-shape ft-shape-${item.kind} ft-face-${faces[(item.rotation || 0) as Rotation]} ${small ? 'ft-shape-small' : ''}`} style={{ '--piece-color': palette(item.appearance || 'oak') } as React.CSSProperties}>
@@ -45,6 +52,7 @@ function Board({ layout, room, rules, inventory, report, title, revision, compac
   onSelect:(id:string|null)=>void;onEdit:(id:string,patch:PlacementPatch,stamp:string)=>void;onPin:(id:string)=>void;onNotice:(text:string)=>void;
   mode:OverlayMode;editable:boolean;stamp:string;suggestions:Candidate[];onAccept:(c:Candidate)=>void;draggedVariant:string|null;onDropVariant:(piece:Furniture,stamp:string)=>void;focusCells:Cell[];onEditRoom:()=>void;
 }) {
+  const [zonesOpen, setZonesOpen] = useState(false);
   const board=useRef<HTMLDivElement>(null);
   const [zoneId,setZoneId]=useState<string|null>(null);
   const focused=new Set(focusCells.map(c=>`${c.x},${c.y}`));
@@ -91,7 +99,7 @@ function Board({ layout, room, rules, inventory, report, title, revision, compac
   const illegalCells=new Set(preview?.blocking.flatMap(i=>i.cells.map(c=>`${c.x},${c.y}`))||[]);
   const selectedPiece=layout.furniture.find(p=>p.id===selected);
   const selectedShown=ghost?.id===selected?ghost:selectedPiece;
-  return <section className={`ft-board-shell ${compact?'ft-compact':''}`} aria-label={`${title} board`}>
+  return <section className={`ft-board-shell ${compact?'ft-compact':''}`} aria-label={`${title} board`} style={{'--aspect':room.widthCm/room.depthCm} as React.CSSProperties}>
     <div className="ft-board-caption"><span>{title} <em>rev. {revision}</em></span><span>{(room.widthCm*room.depthCm/10000).toFixed(1)} m²</span></div>
     <div className="ft-ruler-top"><span/><span>{fmt(room.widthCm/100)} m</span><span/></div>
     <div className="ft-board-wrap"><div className="ft-ruler-side">{fmt(room.depthCm/100)} m</div>
@@ -117,15 +125,18 @@ function Board({ layout, room, rules, inventory, report, title, revision, compac
         <span className="ft-north">N ↑</span>
       </div>
     </div>
-    <div className="ft-zone-chips" role="group" aria-label={`${title} clearance zones`}>{report.zones.map(z=><button key={z.id} aria-pressed={zoneId===z.id} className={`ft-zone-${zoneTone(z)}`} onClick={()=>setZoneId(zoneId===z.id?null:z.id)}>{zoneTone(z)==='blocked'?'×':zoneTone(z)==='clear'?'✓':'!'} {z.label}</button>)}</div>
-    {report.zones.length>0 && <p className="ft-zone-legend">✓ Teal: reachable · ! Amber: preferred tight · × Red hatch: blocked</p>}
+    <div className={`ft-zone-chips${zonesOpen ? '' : ' ft-zone-collapsed'}`} role="group" aria-label={`${title} clearance zones`}>{report.zones.length>0 && <button type="button" className="ft-zone-summary" aria-expanded={zonesOpen} onClick={()=>setZonesOpen(!zonesOpen)}>{(() => { const t=report.zones.map(zoneTone); const bad=t.filter(x=>x==='blocked').length, tight=t.filter(x=>x!=='blocked'&&x!=='clear').length; return `${report.zones.length} zone${report.zones.length===1?'':'s'} · ${bad?`${bad} blocked`:tight?`${tight} tight`:'all reachable'}`; })()} {zonesOpen?'▾':'▸'}</button>}{zonesOpen && report.zones.map(z=><button key={z.id} aria-pressed={zoneId===z.id} className={`ft-zone-${zoneTone(z)}`} onClick={()=>setZoneId(zoneId===z.id?null:z.id)}>{zoneTone(z)==='blocked'?'×':zoneTone(z)==='clear'?'✓':'!'} {z.label}</button>)}</div>
+    {report.zones.length>0 && zonesOpen && <p className="ft-zone-legend">✓ Teal: reachable · ! Amber: preferred tight · × Red hatch: blocked</p>}
     <div className="ft-overlay-legend">{mode==='height'?'· FREE   / L LOW   × T TALL   ? UNKNOWN':mode==='walk'?'· clear   / ! tight   × blocked   ↗ reachable':mode==='tv'?'· strip clear   S seat   × blocked   ? unknown':mode==='doors'?'/ reserved sweep   × open leaf':''}</div>
   </section>;
 }
 function NumberField({ label, value, onChange, min = 0, max = 1000, step = 20 }: { label: string; value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number }) { return <label className="ft-field"><span>{label}</span><div><input type="number" value={value} min={min} max={max} step={step} onChange={e => { const n = Number(e.target.value); if (Number.isFinite(n)) onChange(n); }} /><span>cm</span></div></label>; }
 function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }) {
-  const [session] = useState(() => roomSession(typeof window === 'undefined' ? '' : window.location.search));
-  const [store] = useState(() => suppliedStore || createStore(typeof window === 'undefined' ? session.makeInitial() : loadState(session), { beforeNewDocument: (previous, next) => { saveWorkspaceRoom(localStorage, session.storageKey, next, previous); } }));
+  const [session, setSession] = useState(() => roomSession(typeof window === 'undefined' ? '' : window.location.search));
+  // Each sample library owns its storage key, and the URL mirrors which one is open.
+  // Reading it back here lets a single store — and a single set of native tool
+  // registrations — serve every room, with no page load when the human switches.
+  const [store] = useState(() => suppliedStore || createStore(typeof window === 'undefined' ? session.makeInitial() : loadState(session), { beforeNewDocument: (previous, next) => { saveWorkspaceRoom(localStorage, roomSession(window.location.search).storageKey, next, previous); } }));
   const [state, setState] = useState(store.getState());
   const [view, setView] = useState<View>(() => (store.getState().documentId || !['local','3m'].includes(session.sample)) && store.getState().proposal ? 'proposal' : 'current');
   const [savedRooms, setSavedRooms] = useState<{id:string;name:string}[]>([]);
@@ -145,15 +156,16 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
   const [webmcp, setWebmcp] = useState<WebMCPState>({ state: 'checking', count: 0, message: 'Checking native tools…' });
   const [ownedForm, setOwnedForm] = useState({ label: 'My armchair', kind: 'chair', w: 80, d: 80, h: 85, sleepSize: 'single' as 'single' | 'double' | 'king', storageRole:'general' as 'wardrobe'|'bedside'|'general' });
   const abort = useRef<AbortController | null>(null);
+  const [railOpen, setRailOpen] = useState(false);
   const [toolTick, setToolTick] = useState(0);
   useEffect(() => store.subscribe(() => { setState(store.getState()); setSuggestions([]); setToolTick(t => t + 1); }), [store]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- toolTick is the deliberate re-read trigger for the store's mutable tool log.
   const toolLog = useMemo(() => store.getToolLog().slice(0, 12), [store, toolTick]);
   useEffect(() => {
     try {
       const workspace = saveWorkspaceRoom(localStorage, session.storageKey, state);
       queueMicrotask(() => { setSavedRooms(workspace.documents.map(d => ({ id: d.id, name: d.state.room.name }))); setSaveFailed(false); });
-      const url = new URL(window.location.href); url.searchParams.set('room', documentId(state));
-      window.history.replaceState(null, '', url);
+      syncSampleUrl(session.sample, documentId(state));
     } catch { queueMicrotask(() => { setSaveFailed(true); setNotice({ text: 'Local saving unavailable. Export your room before closing.', error: true }); }); }
   }, [state, session]);
   useEffect(() => registerFloortrisTools(store, setWebmcp, document, result => {
@@ -199,6 +211,33 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
   const select = (id: string | null) => { setSelected(id); setPanel(null); };
   const togglePanel = (p: typeof panel) => { setPanel(panel === p ? null : p); setSelected(null); };
   const changeView = (v: View) => { setView(v); setFocusCells([]); setPreviewVariant(null); setSelected(null); setPanel(null); setSuggestions([]); };
+  // Rooms switch in place. No navigation, no reload, and the native tools stay
+  // registered; the URL follows the state so a link still opens the same room.
+  const enterRoom = (next: AppState) => {
+    abort.current?.abort(); abort.current = null;
+    const r = store.humanOpenRoom(next); onResult(r);
+    if (!r.operationSucceeded) return;
+    const opened = store.getState();
+    setView(opened.proposal && !opened.current.furniture.length ? 'proposal' : 'current');
+    setFocusCells([]); setPreviewVariant(null); setSelected(null); setPanel(null); setSuggestions([]); setDraggedVariant(null);
+    setReview(null); setShowSetup(false); setShowOwned(false); setMode('furniture'); setTvFlash(0); setTvBadge(false); setBusy(false);
+  };
+  const openSavedRoom = (id: string) => {
+    if (id === documentId(state)) return;
+    let target: AppState | undefined;
+    try { target = readWorkspace(localStorage, session.storageKey)?.documents.find(d => d.id === id)?.state; } catch { target = undefined; }
+    target = target || store.getDocuments().find(d => documentId(d) === id);
+    if (!target) { setNotice({ text: 'That saved room could not be read on this device.', error: true }); return; }
+    enterRoom(target);
+  };
+  const openSample = (id: string) => {
+    const next = roomSession(`?sample=${id}`);
+    if (next.storageKey === session.storageKey && documentId(state) === 'original') return;
+    let target: AppState | null = null;
+    try { target = loadWorkspaceRoom(localStorage, next.storageKey, 'original'); } catch { target = null; }
+    syncSampleUrl(next.sample); setSession(next);
+    enterRoom(target || next.makeInitial());
+  };
   const update = (patch: Parameters<FloortrisStore['humanUpdate']>[2]) => { if (item && editable) onResult(store.humanUpdate(which, item.id, patch)); };
   const add = (variantId: string) => { if (!editable) return; setDimension('2d'); const r = store.humanAdd(which, variantId); onResult(r); if (r.operationSucceeded) { select(r.objectId as string); setNotice({ text: 'Added. Drag to place; any conflicts stay visible.', error: false }); } };
   const pin = (id: string) => {
@@ -248,8 +287,10 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
     return report.issues.some(i => i.severity === 'block' && prefixes.some(p => i.code.startsWith(p))) ? 'blocked' : 'clear';
   };
   return <div className="ft-app ft-overhaul">
-    <header className="ft-header"><Brand /><label className="ft-room-picker"><span>Rooms</span><select aria-label="Open a saved room or sample" value={`saved:${documentId(state)}`} onChange={e=>{if(e.target.value.startsWith('saved:')){const url=new URL(window.location.href);url.searchParams.set('room',e.target.value.slice(6));window.location.assign(url.href);}else{const preset=ROOM_PRESETS.find(p=>p.id===e.target.value);if(preset){const url=new URL(preset.href,window.location.href);url.searchParams.set('room','original');window.location.assign(url.href);}}}}><optgroup label="Your saved rooms">{(savedRooms.length?savedRooms:[{id:documentId(state),name:state.room.name}]).map(r=><option key={r.id} value={`saved:${r.id}`}>{r.name}</option>)}</optgroup><optgroup label="Sample rooms">{ROOM_PRESETS.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}</optgroup></select></label><h1>{room.name}<small className="ft-room-summary">{nice(profile.kind)} · {fmt(room.widthCm/100)} × {fmt(room.depthCm/100)} m</small></h1><div className="ft-header-actions"><span className="ft-save-label">{saveFailed ? 'Not saved · export room' : 'Saved on this device'}</span><div className="ft-history" role="group" aria-label="Edit history"><button aria-label="Undo" title="Undo · ⌘/Ctrl Z (this session)" disabled={!store.getHistory().canUndo || showSetup || !!review} onClick={()=>travelHistory(false)}>↶</button><button aria-label="Redo" title="Redo · ⌘/Ctrl Shift Z (this session)" disabled={!store.getHistory().canRedo || showSetup || !!review} onClick={()=>travelHistory(true)}>↷</button></div><button className="ft-button ft-secondary" aria-expanded={panel === 'room'} onClick={() => togglePanel('room')}>Room <span aria-hidden="true">⌄</span></button></div></header>
+    <header className="ft-header"><Brand /><label className="ft-room-picker"><span>Rooms</span><select aria-label="Open a saved room or sample" value={`saved:${documentId(state)}`} onChange={e=>{const v=e.target.value;if(v.startsWith('saved:'))openSavedRoom(v.slice(6));else if(ROOM_PRESETS.some(p=>p.id===v))openSample(v);}}><optgroup label="Your saved rooms">{(savedRooms.length?savedRooms:[{id:documentId(state),name:state.room.name}]).map(r=><option key={r.id} value={`saved:${r.id}`}>{r.name}</option>)}</optgroup><optgroup label="Sample rooms">{ROOM_PRESETS.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}</optgroup></select></label><h1>{room.name}<small className="ft-room-summary">{nice(profile.kind)} · {fmt(room.widthCm/100)} × {fmt(room.depthCm/100)} m</small></h1><div className="ft-header-actions"><span className="ft-save-label">{saveFailed ? 'Not saved · export room' : 'Saved on this device'}</span><div className="ft-history" role="group" aria-label="Edit history"><button aria-label="Undo" title="Undo · ⌘/Ctrl Z (this session)" disabled={!store.getHistory().canUndo || showSetup || !!review} onClick={()=>travelHistory(false)}>↶</button><button aria-label="Redo" title="Redo · ⌘/Ctrl Shift Z (this session)" disabled={!store.getHistory().canRedo || showSetup || !!review} onClick={()=>travelHistory(true)}>↷</button></div><button className="ft-button ft-secondary" aria-expanded={panel === 'room'} onClick={() => togglePanel('room')}>Room <span aria-hidden="true">⌄</span></button></div></header>
     <main className="ft-stage">
+      <nav className={`ft-dock${railOpen ? ' ft-dock-expanded' : ''}`} aria-label="Furniture dock"><span className="ft-dock-title">Pieces</span><button className="ft-dock-open" aria-expanded={railOpen} onClick={() => setRailOpen(!railOpen)}><span aria-hidden="true">{railOpen ? '−' : '＋'}</span>{railOpen ? 'Show fewer' : 'Browse all'}</button><button className="ft-owned-entry" onClick={() => { setPanel('pieces'); setSelected(null); setShowOwned(false); }}>Owned furniture</button>{(railOpen ? CATALOGUE.filter(v => !v.recommendedProfiles || v.recommendedProfiles.includes(profile.kind)).map(v => v.id) : dockVariants(profile)).map(id => { const v = CATALOGUE.find(v => v.id === id)!; return <button key={id} className="ft-dock-piece" {...dockProps(id)} disabled={!editable} onClick={() => add(id)} title={`Add ${v.name}`}><span className="ft-dock-shape"><Shape item={{kind:v.kind, appearance:v.palette}} small /></span><span>{railOpen ? v.name : v.kind === 'tv' ? 'TV' : v.kind === 'coffee_table' ? 'Table' : v.tags?.includes('bedside') ? 'Bedside' : v.tags?.includes('wardrobe') ? 'Wardrobe' : nice(v.kind)}</span>{railOpen && <small className="ft-dock-size">{v.sizeCm.w} × {v.sizeCm.d} cm</small>}</button>; })}<span className="ft-dock-hint">{dimension==='3d'?'Add a piece to place it in 2D':'Drag a piece onto the grid'}</span>{profile.kind==='bathroom_concept' && <button className="ft-button ft-secondary" onClick={()=>setShowSetup(true)}>Edit fixtures ↗</button>}</nav>
+      {previewVariant && dimension==='2d' && panel!=='pieces' && <VariantPreview variant={CATALOGUE.find(v=>v.id===previewVariant)!} rules={rules}/>}
       <section className="ft-canvas-panel" aria-label="Room planning workspace">
         <div className="ft-board-chrome"><div className="ft-view-tabs" role="group" aria-label="Layout view">{(['current', 'proposal', 'compare'] as View[]).map(v => <button key={v} aria-pressed={view === v} className={view === v ? 'active' : ''} onClick={() => changeView(v)} disabled={v !== 'current' && !active}>{v === 'current' ? 'Yours' : v === 'proposal' ? 'Proposal' : 'Compare'}</button>)}</div><div className="ft-chrome-right"><div className="ft-dimension-tabs" role="group" aria-label="Room dimension view">{(['2d','3d'] as const).map(d=><button key={d} aria-pressed={dimension===d} onClick={()=>{setDimension(d);setDraggedVariant(null);}}>{d==='2d'?'2D':'3D'}</button>)}</div><button className={`ft-tools-chip ${webmcp.state === 'registered' ? 'ft-tools-ready' : ''}`} onClick={() => togglePanel('tools')}><span aria-hidden="true">●</span> {webmcp.state === 'registered' ? `${webmcp.count} tools ready` : webmcp.state === 'checking' ? 'Checking tools…' : 'Tools off'}</button></div></div>
         <div className={`ft-proposal-row ft-status-${status}`} aria-live="polite"><div className="ft-proposal-message"><strong>{active ? active.kind === 'setup' ? 'Room inputs · awaiting confirmation' : `Proposal · ${status === 'ready_for_review' ? 'ready' : status}` : 'Your room. Another possibility.'}</strong><span>{status === 'stale' ? 'Yours changed. Discard this draft to start again.' : blocking ? `${repairItem?.label || 'Layout'} · ${nice(blocking.code)}` : active ? `Revision ${active.revision} · Yours stays unchanged until Apply` : 'Let the planner arrange pieces around your locks.'}</span></div><div className="ft-proposal-actions">{busy ? <button className="ft-button ft-secondary" onClick={() => abort.current?.abort()}>Cancel search</button> : <button className="ft-button ft-secondary" onClick={plan} disabled={status === 'stale' || active?.kind === 'setup'}>{active ? 'Try again' : 'Try a proposal'}</button>}{active && <><button className="ft-button ft-secondary" onClick={() => active.kind === 'setup' ? (setPanel(null), setSelected(null), setShowSetup(true)) : changeView('proposal')}>View</button><button className="ft-button ft-primary" disabled={status !== 'ready_for_review' || active.kind !== 'layout'} onClick={() => setReview({ id: active.id, revision: active.revision })}>Apply</button><button className="ft-button ft-secondary" onClick={discard}>Discard</button></>}{status === 'blocked' && repairItem && <button className="ft-button ft-primary" disabled={busy} onClick={() => find(repairItem.id)}>Find placements</button>}</div></div>
@@ -263,8 +304,6 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
           })}
         </div>
         <div className="ft-board-bottom"><span>{dimension==='3d'?'3D is a view of the same room · no extra validation assumptions':'20 cm grid · drag to move · R rotate · arrows nudge'}</span><button className="ft-text-button" onClick={() => togglePanel('check')}>Room check · {report.validation.hardFailures ? `${report.validation.hardFailures} to fix` : report.brief.status === 'incomplete' ? 'brief incomplete' : report.validation.warnings ? `${report.validation.warnings} warnings` : 'clear'} ↗</button></div>
-        <nav className="ft-dock" aria-label="Furniture dock"><button className="ft-dock-open" aria-expanded={panel === 'pieces'} onClick={() => togglePanel('pieces')}><span>＋</span>Pieces</button>{dockVariants(profile).map(id => { const v = CATALOGUE.find(v => v.id === id)!; return <button key={id} className="ft-dock-piece" {...dockProps(id)} disabled={!editable} onClick={() => add(id)} title={`Add ${v.name}`}><span className="ft-dock-shape"><Shape item={{kind:v.kind, appearance:v.palette}} small /></span><span>{v.kind === 'tv' ? 'TV' : v.kind === 'coffee_table' ? 'Table' : v.tags?.includes('bedside') ? 'Bedside' : v.tags?.includes('wardrobe') ? 'Wardrobe' : nice(v.kind)}</span></button>; })}<span className="ft-dock-hint">{dimension==='3d'?'Add a piece to place it in 2D':'Drag a piece onto the grid'}</span>{profile.kind==='bathroom_concept' && <button className="ft-button ft-secondary" onClick={()=>setShowSetup(true)}>Edit fixtures ↗</button>}</nav>
-        {previewVariant && dimension==='2d' && panel!=='pieces' && <VariantPreview variant={CATALOGUE.find(v=>v.id===previewVariant)!} rules={rules}/>}
       </section>
       {(panel || item) && <aside className={`ft-drawer ${panel === 'pieces' ? 'ft-pieces-drawer' : ''}`} aria-label={panel ? `${panel} panel` : 'Selected piece'}><div className="ft-drawer-head"><h2>{panel === 'pieces' ? 'Pieces' : panel === 'room' ? 'Room' : panel === 'tools' ? 'Agent tools' : panel === 'check' ? `${view === 'compare' ? 'Yours' : which === 'proposal' ? 'Proposal' : 'Yours'} · room check` : item?.label}</h2><button className="ft-icon-button" aria-label="Close panel" onClick={() => { setPanel(null); setSelected(null); }}>×</button></div>
         {panel === 'pieces' && <><div className="ft-brief-icons" aria-label="Required room brief">{(report.brief.requirements || rules.requiredKinds.map(k=>({key:k,label:k,met:layout.furniture.some(f=>f.kind===k)?1:0,quantity:1,required:true}))).map(r => <span key={r.key}>{r.met >= r.quantity ? '✓' : '○'} {nice(r.label)} {r.quantity>1?`${Math.min(r.met,r.quantity)}/${r.quantity}`:''}{!r.required?' · optional':''}</span>)}</div><h3>Yours</h3>{state.inventory.map(o => <button key={o.id} className="ft-owned-card" onClick={() => { if (!layout.furniture.some(f => f.id === o.id)) setView('current'); select(o.id); }}><strong>{o.label}</strong><span>{o.sizeCm.w} × {o.sizeCm.d} cm · measured</span></button>)}<button className="ft-text-button" onClick={() => setShowOwned(!showOwned)}>+ Add measured piece</button>{showOwned && <form onSubmit={e => { e.preventDefault(); const r = store.humanAddOwned({label:ownedForm.label,kind:ownedForm.kind as Furniture['kind'],sizeCm:{w:ownedForm.w,d:ownedForm.d,h:ownedForm.h},...(ownedForm.kind==='bed'?{sleepSize:ownedForm.sleepSize}:ownedForm.kind==='storage'?{storageRole:ownedForm.storageRole}:{})}); onResult(r); if(r.operationSucceeded){setView('current'); select(r.objectId as string);setShowOwned(false);} }}><label className="ft-field"><span>Piece name</span><input required maxLength={80} value={ownedForm.label} onChange={e => setOwnedForm({...ownedForm,label:e.target.value})}/></label><label className="ft-field"><span>Type</span><select value={ownedForm.kind} onChange={e=>setOwnedForm({...ownedForm,kind:e.target.value})}>{['sofa','chair','desk','coffee_table','storage','plant','bed','rug'].map(k=><option key={k} value={k}>{nice(k)}</option>)}</select></label>{ownedForm.kind==='bed'&&<label className="ft-field"><span>Sleep size classification</span><select value={ownedForm.sleepSize} onChange={e=>setOwnedForm({...ownedForm,sleepSize:e.target.value as 'single'|'double'|'king'})}>{['single','double','king'].map(k=><option key={k} value={k}>{nice(k)}</option>)}</select></label>}{ownedForm.kind==='storage' && <label className="ft-field"><span>Storage role</span><select value={ownedForm.storageRole} onChange={e=>setOwnedForm({...ownedForm,storageRole:e.target.value as 'wardrobe'|'bedside'|'general'})}>{['general','wardrobe','bedside'].map(k=><option key={k} value={k}>{nice(k)}</option>)}</select></label>}<div className="ft-form-grid">{(['w','d','h'] as const).map(k=><NumberField key={k} label={`${k.toUpperCase()} measured`} value={ownedForm[k]} min={1} max={500} step={1} onChange={n=>setOwnedForm({...ownedForm,[k]:n})}/>)}</div><button className="ft-button ft-primary">Add to Yours</button></form>}<h3>Named variants · {nice((room.profile || {kind:'lounge'}).kind)}</h3><div className="ft-variant-list">{CATALOGUE.filter(v=>!v.recommendedProfiles || v.recommendedProfiles.includes((room.profile || {kind:'lounge'}).kind)).map(v=><button key={v.id} {...dockProps(v.id)} disabled={!editable} onClick={()=>add(v.id)}><span className="ft-dock-shape"><Shape item={{kind:v.kind,appearance:v.palette}} small/></span><span><strong>{v.name}</strong><small>{v.sizeCm.w} × {v.sizeCm.d} cm</small></span><span>+</span></button>)}</div><p className="ft-muted">Hover or focus a variant for its measured envelope and clearance. Demo catalogue; no purchasing or real SKUs.</p>{previewVariant && <VariantPreview variant={CATALOGUE.find(v=>v.id===previewVariant)!} rules={rules}/>}</>}

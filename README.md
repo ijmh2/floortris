@@ -275,3 +275,39 @@ overwritten. The active room survives reload, and `?room=<documentId>` selects a
 saved room on this device (not a public room-sharing link). Undo history stays
 within a document. Duplicate request keys are deduplicated within the active page
 session; a replay for an inactive saved room reports `room_not_active`.
+
+## Switching rooms
+
+The **Rooms** picker changes the open document in state — `humanOpenRoom` on the
+store, the same in-place switch `generateRoom` already performed. There is no page
+load, so native registration is never torn down and rebuilt: the fifteen tools stay
+live across a room change. `history.replaceState` keeps `?room=` and `?sample=` in
+step, so an existing link still opens the same room on this device.
+
+A switch clears session undo/redo — history never travels between documents — and
+retains the outgoing room and its draft, both in memory and under its own sample
+library's storage key. Because `generateRoom` switches the same way, the human is
+already on the agent's new room and its proposal the moment the tool returns, ready
+to edit alongside. Switching the Yours / Proposal / Compare **view** remains
+human-only: no tool changes the selected view.
+
+The piece dock is a left rail rather than a strip beneath the board. As a strip it
+fell below the fold in a tall room, so the pieces you were about to drag sat
+off-screen from the board you were dragging them onto. Board width is now capped by
+the room's own aspect ratio against the remaining viewport height, so the rail, the
+plan and the room check read together without scrolling.
+
+Every room entry refreshes proposal authority and current/rule revisions, including
+sample rooms that reuse IDs and a switch back to the same room. Queued edits,
+captured Apply actions, planner results, retries and candidate references from the
+previous entry cannot modify the newly opened room. Stale drafts remain stale.
+
+Repair hints in proposal tool reports include the active `proposalId` and
+`revision`, so their arguments can be passed directly to the named tool. Direct
+moves and turns are checked against the full engine and ownership locks: they must
+resolve the reported issue without adding hard failures or missing requirements.
+Otherwise the hint requests a bounded placement search. Current-room, stale,
+setup and hypothetical reports do not offer edits against the active layout draft.
+
+The rail's **Owned furniture** button opens the inventory panel and its
+**Add measured piece** form; owned measurements and locks remain human-controlled.

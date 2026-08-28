@@ -23,7 +23,7 @@ export function migrateState(input: AppState): AppState {
 export const proposalStatus = (s: AppState, p: Proposal | null = s.proposal) => {
   if (!p) return 'none';
   if (p.baseCurrentRevision !== s.currentRevision || p.baseRuleRevision !== s.ruleRevision) return 'stale';
-  const report = validate(p.layout, p.room, p.rules, s.inventory);
+  const report = validate(p.layout, p.room, p.rules, s.inventory, false);
   return report.validation.hardFailures ? 'blocked' : p.kind === 'setup' || report.brief.status === 'incomplete' ? 'drafting' : 'ready_for_review';
 };
 function frozen<T>(value: T): T { if (value && typeof value === 'object') { Object.values(value).forEach(frozen); Object.freeze(value); } return value; }
@@ -77,9 +77,18 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (kind && p.kind !== kind) fail(kind === 'layout' ? 'unconfirmed_setup' : 'unauthorized_proposal_kind', `This command requires a ${kind} proposal. Setup inputs require separate human confirmation.`);
     return p;
   };
+  const presentIssue = (issue: Report['issues'][number], p: Proposal | null, cellLimit: number) => {
+    const { fix: hint, ...detail } = issue;
+    const editable = p?.kind === 'layout' && p.baseCurrentRevision === state.currentRevision && p.baseRuleRevision === state.ruleRevision;
+    const fix = editable && hint ? { ...hint, args: { ...hint.args, proposalId: p.id, revision: p.revision } } : undefined;
+    const objectId = editable ? issue.objectIds.find(id => p.layout.furniture.some(o => o.id === id)) : undefined;
+    return { ...detail, cells: issue.cells.slice(0, cellLimit), cellCount: issue.cells.length,
+      ...(fix ? { fix, suggestedNextTool: fix.tool, suggestedArgs: fix.args }
+        : objectId ? { suggestedNextTool: 'findPlacements', suggestedArgs: { proposalId: p!.id, revision: p!.revision, objectId } } : {}) };
+  };
   const envelope = (p: Proposal, extra: Args = {}): CommandResult => {
     const r = validate(p.layout, p.room, p.rules, state.inventory);
-    const issues = r.issues.slice(0, 16).map(issue => ({ ...issue, cells: issue.cells.slice(0, 40), cellCount: issue.cells.length, ...(issue.objectIds.some(id => p.layout.furniture.some(o => o.id === id)) ? { suggestedNextTool: 'findPlacements', suggestedArgs: { proposalId: p.id, revision: p.revision, objectId: issue.objectIds.find(id => p.layout.furniture.some(o => o.id === id)) } } : {}) }));
+    const issues = r.issues.slice(0, 16).map(issue => presentIssue(issue, p, 40));
     return { operationSucceeded: true, documentId: documentId(state), proposalId: p.id, revision: p.revision, status: proposalStatus(state, p), profile: p.room.profile || { kind: 'lounge' }, conceptualOnly: r.conceptualOnly || false, baseCurrentRevision: p.baseCurrentRevision, baseRuleRevision: p.baseRuleRevision, validation: r.validation, brief: r.brief, issues, issueCount: r.issues.length, hasMoreIssues: r.issues.length > issues.length, flagsSummary: r.flagsSummary, omitted: p.omitted, ...extra };
   };
   const commit = (p: Proposal, extra: Args = {}) => { p.revision++; const next = clone(state); next.proposal = p; publish(next); return envelope(p, extra); };
@@ -133,7 +142,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (existing && a.variantId) piece = checkPatch(existing, { variantId: a.variantId }, p.layout);
     if (piece.kind === 'chair' && a.linkedDeskId) piece.linkedDeskId = a.linkedDeskId;
     if (piece.kind === 'tv' && !piece.targetSofaId) piece.targetSofaId = p.layout.furniture.find(o => o.kind === 'sofa')?.id;
-    const base = validate(p.layout, p.room, p.rules, state.inventory), baseBlocks = new Set(base.issues.filter(i => i.severity === 'block').map(issueSignature));
+    const base = validate(p.layout, p.room, p.rules, state.inventory, false), baseBlocks = new Set(base.issues.filter(i => i.severity === 'block').map(issueSignature));
     const found: Candidate[] = [], positions: HumanPatch[] = [], seen = new Set<string>(), started = Date.now(); let trials = 0;
     const cols = Math.floor(p.room.widthCm / 20), rows = Math.floor(p.room.depthCm / 20);
     const locks = authoritative(piece).locked;
@@ -195,7 +204,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       let placed: Furniture;
       try { placed = checkPatch(piece, patch, p.layout); } catch { continue; }
       const testLayout = clone(p.layout); testLayout.furniture = [...testLayout.furniture.filter(o => o.id !== placed.id), placed];
-      const report = validate(testLayout, p.room, p.rules, state.inventory);
+      const report = validate(testLayout, p.room, p.rules, state.inventory, false);
       const relevant = report.issues.filter(i => i.severity === 'block' && i.code !== 'desk_chair_missing' && (i.objectIds.includes(placed.id) || !baseBlocks.has(issueSignature(i))));
       const avoid = a.avoidFlags || []; const occupiedKeys = new Set(rectCells(bounds(placed)).map(c => `${c.x},${c.y}`));
       const violatesAvoid = placed.kind !== 'tv' && report.cells.some(c => occupiedKeys.has(`${c.x},${c.y}`) && c.flags.some(f => avoid.includes(f)));
@@ -226,7 +235,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         if (name === 'getRoomState') return clone({ ...common, room: snap.room, profile: snap.room.profile || { kind: 'lounge' }, profileRequirements: report.brief.requirements || [], conceptualOnly: report.conceptualOnly || false, rules: snap.rules, coordinates: { origin: 'top-left', x: 'east', y: 'south', cellCm: 20, geometryUnit: 'cm' }, validation: report.validation, brief: report.brief, clearances: report.clearances, flagsSummary: report.flagsSummary, proposalKind: state.proposal?.kind, assumptions: 'Product assumptions only; bathroom concepts do not validate installation, regulations or safety.' });
         if (name === 'listFurniture') { const list = [...snap.room.fixtures, ...snap.layout.furniture], offset = a.offset || 0, limit = a.limit || 30; return clone({ ...common, furniture: list.slice(offset, offset + limit), total: list.length, offset, hasMore: offset + limit < list.length, ownedInventory: state.inventory }); }
         const inRegion = (c: { x: number; y: number }) => !a.region || (c.x >= a.region.x && c.y >= a.region.y && c.x < a.region.x + a.region.w && c.y < a.region.y + a.region.d);
-        const entries = a.detail === 'flags' ? report.cells.filter(c => inRegion(c) && (!a.objectId || c.objectIds.includes(a.objectId)) && (!a.ruleCode || c.flags.includes(a.ruleCode))) : report.issues.filter(i => (!a.ruleCode || i.code === a.ruleCode) && (!a.objectId || i.objectIds.includes(a.objectId)) && (!a.region || i.cells.some(inRegion))).map(i => ({ ...i, cells: i.cells.slice(0, 60), cellCount: i.cells.length }));
+        const entries = a.detail === 'flags' ? report.cells.filter(c => inRegion(c) && (!a.objectId || c.objectIds.includes(a.objectId)) && (!a.ruleCode || c.flags.includes(a.ruleCode))) : report.issues.filter(i => (!a.ruleCode || i.code === a.ruleCode) && (!a.objectId || i.objectIds.includes(a.objectId)) && (!a.region || i.cells.some(inRegion))).map(i => presentIssue(i, a.which === 'proposal' && !a.candidateId ? state.proposal : null, 60));
         const offset = a.offset || 0, limit = a.limit || 30;
         return clone({ ...common, scope: a.candidateId ? 'hypothetical_candidate' : a.region || a.objectId || a.ruleCode ? 'focused_details_with_full_layout_status' : 'full_layout', validation: report.validation, brief: report.brief, clearances: report.clearances, flagsSummary: report.flagsSummary, [a.detail === 'flags' ? 'cells' : 'issues']: entries.slice(offset, offset + limit), total: entries.length, offset, hasMore: offset + limit < entries.length, nextOffset: offset + limit < entries.length ? offset + limit : null });
       }
@@ -514,6 +523,26 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     return envelope(p, { message: 'Room inputs staged. Review and confirm to update Yours.' });
   });
   const resetDemo = (initial: AppState = makeDemo()) => { publish(restored({ ...initial, documentId: state.documentId })); };
-  return { getState, getDocuments, getHistory, getToolLog, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, applyProposal, confirmSetup, discardProposal, resetDemo };
+  // Human-only room switch. The active document changes in place, exactly the way
+  // generateRoom switches it, so opening a saved room never needs a page load. The
+  // outgoing document is retained here (and by the caller's persistence) and session
+  // history is cleared, because undo must not travel between documents.
+  const humanOpenRoom = (next: AppState) => human(() => {
+    const loaded = migrateState(next), id = documentId(loaded);
+    try { validate(loaded.current, loaded.room, loaded.rules, loaded.inventory); }
+    catch { fail('invalid_room', 'That saved room could not be read. Export it before continuing.'); }
+    // Saved samples can share both IDs and revision numbers. Refresh authority
+    // on every entry (including A → B → A) and clear retries before publishing.
+    // Content and stale-draft status survive; queued commands and Apply do not.
+    const target = restored(loaded);
+    // Sample libraries each keep their own storage key, so two documents can share
+    // the id 'original'. Only retain the outgoing one when it is genuinely distinct.
+    if (documentId(state) !== id) documents.set(documentId(state), state);
+    documents.set(id, target);
+    past.length = 0; future.length = 0;
+    publish(target, false);
+    return { operationSucceeded: true, documentId: id, message: `Opened ${target.room.name}. Your previous room and its draft are saved.` };
+  });
+  return { getState, getDocuments, getHistory, getToolLog, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, humanOpenRoom, applyProposal, confirmSetup, discardProposal, resetDemo };
 }
 export type FloortrisStore = ReturnType<typeof createStore>;

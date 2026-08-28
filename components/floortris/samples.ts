@@ -64,7 +64,7 @@ export function makeHomeOffice(): AppState {
   const state = blank('Compact home office', 320, 300, { kind: 'home_office', seating: false, storage: true });
   state.room.openings.push({ id: 'office-window', kind: 'window', wall: 'north', offsetCm: 40, widthCm: 140, sillCm: 95, headCm: 215, type: 'fixed', windowAccess: false });
   const desk = fromVariant('line-desk-100', 'office-desk'); desk.originCell = { x: 0, y: 0 };
-  const chair = fromVariant('nest-chair-60', 'office-chair'); chair.originCell = { x: 0, y: 3 }; chair.linkedDeskId = desk.id;
+  const chair = fromVariant('nest-chair-60', 'office-chair'); chair.originCell = { x: 0, y: 3 }; chair.rotation = 180; chair.linkedDeskId = desk.id;
   const storage = fromVariant('archive-tall-80', 'office-storage'); storage.originCell = { x: 12, y: 0 };
   return proposal(state, [desk, chair, storage]);
 }

@@ -59,3 +59,144 @@
 .ft-face-east::before{top:50%;margin-top:-4px;right:-3px;border-left-color:#3d5340;border-right-width:0}
 /* The notch must escape the piece outline; beds/bathroom glyphs clip by default. */
 .ft-shape-bed,.ft-shape-basin,.ft-shape-toilet,.ft-shape-shower,.ft-shape-bath,.ft-shape-towel_rail{overflow:visible!important}
+
+/* Left piece rail. The dock had become a strip pinned under the board, so in a
+   tall room it sat below the fold: you had to scroll past the plan to reach the
+   pieces you were about to drop onto it. It returns to a left sidebar — one
+   fixed place, always in view, beside the board it feeds. */
+.ft-overhaul .ft-stage{--ft-dock-w:152px}
+.ft-overhaul .ft-dock{flex:0 0 var(--ft-dock-w);width:var(--ft-dock-w);align-self:flex-start;position:sticky;top:20px;bottom:auto;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:7px;padding:14px 12px 12px;background:#fbfcf8;border:1px solid var(--line);border-radius:14px;box-shadow:0 5px 22px #28412d06;max-height:calc(100vh - 108px);overflow-y:auto;z-index:24}
+.ft-dock-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#7b8975;padding:0 2px 3px}
+.ft-overhaul .ft-dock>button{width:100%;min-height:44px;justify-content:flex-start;text-align:left;gap:10px;padding:8px 10px;border-radius:9px;line-height:1.25}
+.ft-overhaul .ft-dock>button:hover:not(:disabled){border-color:#b8c7ad;background:#f4f8ec}
+.ft-overhaul .ft-dock>.ft-dock-open{margin-bottom:4px}
+.ft-overhaul .ft-dock>.ft-dock-open>span{font-size:17px;line-height:1}
+.ft-overhaul .ft-dock-shape{width:34px;height:26px}
+.ft-overhaul .ft-dock-piece{text-transform:capitalize}
+.ft-overhaul .ft-dock-hint{display:block;margin:10px 2px 0;font-size:10.5px;line-height:1.5;color:#8b9580}
+.ft-overhaul .ft-dock>.ft-button{margin-top:8px}
+/* The hovered-variant footprint card belongs to the rail now, not to the board. */
+.ft-overhaul .ft-stage>.ft-size-preview{position:absolute;z-index:36;left:calc(var(--ft-dock-w) + 32px);bottom:26px;width:265px;box-shadow:0 9px 30px #344f3525;pointer-events:none}
+/* Fit the plan to the viewport. The shell may only be as wide as the remaining
+   height allows at this room's own aspect ratio, so the rail, the board and the
+   room check read together without scrolling. */
+.ft-overhaul .ft-canvas-panel{padding-bottom:4px}
+.ft-overhaul .ft-boards{margin-top:6px;padding:10px 42px 4px}
+.ft-overhaul .ft-ruler-top{margin:10px 0 9px}
+.ft-overhaul .ft-board-chrome{padding:12px 20px}
+.ft-overhaul .ft-proposal-row{padding:11px 20px;min-height:66px}
+.ft-overhaul .ft-overlay-toolbar{padding:9px 20px}
+.ft-overhaul .ft-zone-chips{padding:10px 0 3px}
+.ft-overhaul .ft-overlay-legend{padding-top:10px}
+.ft-overhaul .ft-board-bottom{padding:11px 22px 10px}
+.ft-overhaul .ft-board-shell:not(.ft-compact){max-width:min(760px,max(300px,calc((100vh - 508px) * var(--aspect,1.25))))}
+.ft-overhaul .ft-canvas-panel:has(.ft-concept-banner) .ft-board-shell:not(.ft-compact){max-width:min(760px,max(300px,calc((100vh - 565px) * var(--aspect,1.25))))}
+.ft-overhaul .ft-comparison .ft-board-shell{max-width:max(260px,calc((100vh - 508px) * var(--aspect,1.25)))}
+/* Switching is instant now, so the picker gets room to show a full room name. */
+.ft-overhaul .ft-room-picker select{max-width:210px}
+@media(max-width:1050px){
+.ft-overhaul .ft-stage{--ft-dock-w:126px}
+.ft-overhaul .ft-dock{padding:12px 9px 10px;gap:6px}
+.ft-overhaul .ft-dock>button{gap:8px;padding:7px 8px;font-size:11px;min-height:40px}
+.ft-overhaul .ft-dock-hint{display:block;font-size:10px}
+.ft-overhaul .ft-boards{padding:10px 30px 4px}
+}
+@media(max-width:740px){
+/* One column on narrow screens: the rail becomes a horizontally scrolling strip
+   that stays under the header while the board scrolls beneath it. */
+.ft-overhaul .ft-dock{position:sticky;top:0;width:auto;max-height:none;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;padding:8px 10px;margin-bottom:8px;border-radius:11px;overflow-x:auto;overflow-y:hidden}
+.ft-overhaul .ft-dock>button{width:auto;flex:0 0 auto;flex-direction:column;justify-content:center;text-align:center;gap:4px;padding:6px 9px;font-size:10px;min-height:44px}
+.ft-overhaul .ft-dock>.ft-dock-open{margin-bottom:0}
+.ft-dock-title,.ft-overhaul .ft-dock-hint{display:none}
+.ft-overhaul .ft-stage>.ft-size-preview{display:none}
+.ft-overhaul .ft-room-picker select{max-width:145px}
+.ft-overhaul .ft-board-shell:not(.ft-compact){max-width:100%}
+}
+@media(max-width:430px){
+/* Phone header: brand, room picker and actions on one line without overflowing. */
+.ft-overhaul .ft-header{gap:8px;padding:0 10px}
+.ft-overhaul .ft-room-picker{min-width:0}
+.ft-overhaul .ft-room-picker select{max-width:100px;padding:8px 20px 8px 8px}
+.ft-overhaul .ft-header-actions{gap:2px}
+}
+
+/* Piece labels sat at fixed percentages (41% and 60%) inside the furniture
+   box, so on a short piece the two lines collided: an 80x40 storage unit
+   overlapped by 9px, and a 220x90 sofa cleared by only 1px. Anchor them
+   symmetrically about the centre so the gap scales with nothing at all. */
+.ft-item-label{top:50%;transform:translateY(-100%);line-height:1.05}
+.ft-item-dim{top:50%;transform:translateY(1px);line-height:1.05}
+
+/* The west-wall window opening resolved to a 180deg transform, which combined
+   with the label's own -90deg to render WINDOW upside down. The opening itself
+   is a symmetric 7px bar, so pinning it upright costs nothing visually. */
+.ft-opening-window.ft-wall-west{transform:none}
+.ft-opening-window.ft-wall-west span{transform:rotate(-90deg);transform-origin:center;right:0;margin-right:10px}
+
+/* PHASE 1 — labels sized by the piece, not the viewport.
+   Previously font-size used vw units, so an 80x40 storage unit got the same
+   text as a 220x90 sofa and "STORAGE" rendered 2-3x wider than the box it
+   named, with the dimension line wrapping onto the grid. Making each piece a
+   size container lets the text scale with the geometry it belongs to. */
+.ft-furniture{container-type:size;container-name:piece}
+.ft-item-label,.ft-item-dim{white-space:nowrap;overflow:hidden;padding:0 2px}
+.ft-item-label{font-size:clamp(5px,20cqmin,11px);letter-spacing:.4px}
+.ft-item-dim{font-size:clamp(4px,15cqmin,8px)}
+/* Drop detail rather than let it overflow: dimensions first, then the name. */
+@container piece (max-height: 58px){.ft-item-dim{display:none}}
+@container piece (max-width: 70px){.ft-item-dim{display:none}}
+@container piece (max-height: 34px){.ft-item-label{display:none}}
+@container piece (max-width: 44px){.ft-item-label{display:none}}
+/* .ft-overhaul sets these with vw units at higher specificity, which would
+   otherwise defeat the container sizing above. Match it, keep cq units. */
+.ft-overhaul .ft-item-label{font-size:clamp(5px,20cqmin,11px);letter-spacing:.4px}
+.ft-overhaul .ft-item-dim{font-size:clamp(4px,15cqmin,8px)}
+
+/* PHASE 2 — quiet by default, detail on demand.
+   Every piece shouting its name and dimensions at once is what made the board
+   feel busy. The dimension line is now reserved for the piece you are actually
+   looking at; the name stays for pieces large enough to carry it. */
+.ft-item-dim{display:none}
+.ft-furniture:hover .ft-item-dim,.ft-furniture:focus-visible .ft-item-dim,
+.ft-furniture.selected .ft-item-dim{display:block}
+.ft-item-label{transition:opacity .12s}
+.ft-furniture:not(:hover):not(.selected) .ft-item-label{opacity:.72}
+/* Hover or selection always earns a name, even on a piece too small for one. */
+.ft-furniture:hover .ft-item-label,.ft-furniture:focus-visible .ft-item-label,
+.ft-furniture.selected .ft-item-label{display:block;opacity:1}
+.ft-furniture:hover,.ft-furniture.selected{z-index:9}
+
+/* PHASE 3 — the zone row collapses to one line until asked. */
+.ft-zone-summary{background:#eef2e6;border:1px solid #dfe4d3;border-radius:999px;padding:4px 11px;font-size:11px;color:#3f5340;letter-spacing:.2px}
+.ft-zone-summary:hover{background:#e5ebd9}
+.ft-zone-chips.ft-zone-collapsed{gap:0}
+/* Expanded rail shows the variant, not just the kind: three pieces all reading
+   "Desk" is worse than no list at all. */
+.ft-dock-size{display:block;font-size:10px;color:#8b9088;letter-spacing:.2px;margin-top:1px}
+.ft-dock-piece{text-align:left}
+
+/* Wider rail once expanded: 152px cannot hold "Arc sofa · 200" plus its size,
+   and the names were wrapping to three lines. Shape on the left, name over
+   size on the right, both clipped rather than wrapped. */
+.ft-dock.ft-dock-expanded{--ft-dock-w:252px}
+.ft-dock-expanded .ft-dock-piece{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;column-gap:10px;text-transform:none;padding:7px 10px;text-align:left}
+.ft-dock-expanded .ft-dock-shape{grid-row:1/3;align-self:center}
+.ft-dock-expanded .ft-dock-piece>span:not(.ft-dock-shape){grid-column:2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;line-height:1.25}
+/* capitalize turned "cm" into "Cm" once real variant names appeared. */
+.ft-dock-size{grid-column:2;text-transform:none}
+
+/* Two-level header: identity and controls on top, the room title beneath. */
+.ft-header{height:auto;min-height:76px;flex-wrap:wrap;row-gap:6px;padding-top:12px;padding-bottom:12px;align-items:center}
+.ft-header>h1{order:4;flex-basis:100%;margin:0}
+.ft-header-actions{order:3}
+
+/* Undo/redo were unstyled and collapsed to slivers. Give them real buttons. */
+.ft-history{display:flex;gap:6px}
+.ft-history button{width:34px;height:34px;padding:0;border:1px solid var(--line);border-radius:9px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;color:#43563f}
+.ft-history button:hover:not(:disabled){background:#eef2e6;border-color:#cfd8c4}
+.ft-history button:disabled{opacity:.35}
+/* .ft-overhaul pins the header height, which clipped the new second row and
+   let the room title spill onto the page background. Match its specificity. */
+.ft-overhaul .ft-header{height:auto;min-height:68px;flex-wrap:wrap;row-gap:4px;padding-top:10px;padding-bottom:10px}
+.ft-overhaul .ft-header>h1{order:4;flex-basis:100%;margin:0}
+.ft-overhaul .ft-header-actions{order:3}

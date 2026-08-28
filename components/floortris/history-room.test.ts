@@ -157,3 +157,54 @@ test('room validation rejects malformed geometry without treating furniture conf
   assert.ok(validate(s.current, moved, s.rules, s.inventory).validation.hardFailures);
   assert.ok(validateRoomInputs({ ...moved, depthCm: 320 }, s.rules));
 });
+
+test('room switches refresh authority even when samples reuse IDs and revision numbers',async()=>{
+  const {makeBedroomDouble,makeHomeOffice}=await import('./samples.ts');
+  const bedroom=makeBedroomDouble(), office=makeHomeOffice(), store=createStore(bedroom), old=bedroom.proposal!;
+  assert.equal(old.id,office.proposal!.id); assert.equal(old.revision,office.proposal!.revision);
+  const queued={proposalId:old.id,revision:old.revision,variantId:'fern-40',idempotencyKey:'queued-before-switch'};
+  assert.equal(store.humanOpenRoom(office).operationSucceeded,true);
+  const opened=clone(store.getState());
+  assert.notEqual(opened.proposal!.id,old.id);
+  assert.deepEqual(opened.proposal!.layout,office.proposal!.layout);
+  assert.deepEqual(opened.room,office.room);
+  assert.deepEqual(opened.inventory,office.inventory);
+  assert.equal((await store.execute('placeFurniture',queued)).operationSucceeded,false);
+  assert.equal(store.applyProposal(old.id,old.revision).operationSucceeded,false);
+  assert.deepEqual(store.getState(),opened);
+  store.humanOpenRoom(bedroom);
+  assert.equal((await store.execute('placeFurniture',queued)).operationSucceeded,false,'returning to the same room must not revive old authority');
+  assert.deepEqual(store.getState().proposal!.layout,bedroom.proposal!.layout);
+  assert.equal(store.getHistory().canUndo,false);
+});
+
+test('room switching rejects in-flight planning and clears replay and candidate caches',async()=>{
+  const {makeBedroomDouble,makeHomeOffice}=await import('./samples.ts');
+  const bedroom=makeBedroomDouble(), store=createStore(bedroom), p=bedroom.proposal!;
+  const placed={proposalId:p.id,revision:p.revision,variantId:'fern-40',originCell:{x:10,y:8},idempotencyKey:'old-replay'};
+  assert.equal((await store.execute('placeFurniture',placed)).operationSucceeded,true);
+  const current=store.getState().proposal!;
+  const candidates=await store.execute('findPlacements',{proposalId:current.id,revision:current.revision,variantId:'fern-40',limit:1});
+  assert.ok((candidates.candidates as unknown[]).length);
+  const candidateId=(candidates.candidates as {candidateId:string}[])[0].candidateId;
+  const pending=store.execute('proposeLayout',{proposalId:current.id,revision:current.revision,variantIds:['line-desk-140','nest-chair-60']});
+  store.humanOpenRoom(makeHomeOffice());const opened=clone(store.getState());
+  assert.equal((await pending).operationSucceeded,false);
+  assert.equal((await store.execute('placeFurniture',placed)).operationSucceeded,false);
+  const active=store.getState().proposal!;
+  assert.equal((await store.execute('placeFurniture',{proposalId:active.id,revision:active.revision,candidateId,idempotencyKey:'old-candidate'})).error?.code,'revision_conflict');
+  assert.deepEqual(store.getState(),opened);
+});
+
+test('opening stale drafts preserves staleness and invalidates old current revisions',async()=>{
+  const {makeBedroomDouble,makeHomeOffice}=await import('./samples.ts');
+  const stale=makeBedroomDouble();stale.currentRevision++;
+  const store=createStore(makeHomeOffice());store.humanOpenRoom(stale);
+  assert.equal(proposalStatus(store.getState()),'stale');
+  assert.deepEqual(store.getState().proposal!.layout,stale.proposal!.layout);
+  const blank=makeHomeOffice();blank.proposal=null;
+  store.humanOpenRoom(blank);
+  const before=clone(store.getState());
+  const rejected=await store.execute('createProposal',{kind:'layout',expectedCurrentRevision:blank.currentRevision,expectedRuleRevision:blank.ruleRevision,idempotencyKey:'old-current-authority'});
+  assert.equal(rejected.error?.code,'revision_conflict');assert.deepEqual(store.getState(),before);
+});

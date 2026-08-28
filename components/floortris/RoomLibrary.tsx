@@ -2,13 +2,14 @@ import { fromVariant, type Variant } from './data.ts';
 import { bedAccessBands, bounds, frontBand } from './engine.ts';
 import type { RoomProfile, Rules } from './model.ts';
 
+/** Sample IDs match `roomSession`, which owns each sample's own storage key. */
 export const ROOM_PRESETS = [
-  { id: 'local', label: 'Original lounge', href: '/' },
-  { id: '3m', label: '3 × 3 m lounge', href: '/?sample=3m' },
-  { id: 'bedroom-single', label: 'Single bedroom', href: '/?sample=bedroom-single' },
-  { id: 'bedroom-double', label: 'Double bedroom', href: '/?sample=bedroom-double' },
-  { id: 'office', label: 'Home office', href: '/?sample=office' },
-  { id: 'bathroom', label: 'Bathroom concept', href: '/?sample=bathroom' },
+  { id: 'local', label: 'Original lounge' },
+  { id: '3m', label: '3 × 3 m lounge' },
+  { id: 'bedroom-single', label: 'Single bedroom' },
+  { id: 'bedroom-double', label: 'Double bedroom' },
+  { id: 'office', label: 'Home office' },
+  { id: 'bathroom', label: 'Bathroom concept' },
 ];
 export function dockVariants(profile: RoomProfile): string[] {
   if (profile.kind === 'bedroom') return [profile.sleeping === 'king' ? 'haven-king-160' : profile.sleeping === 'double' ? 'haven-double-140' : 'haven-single-100', 'nook-bedside-40', 'tallline-wardrobe-100', 'fern-40'];
