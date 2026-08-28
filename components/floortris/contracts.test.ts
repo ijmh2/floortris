@@ -23,7 +23,10 @@ test('3 m sample furnishes a separate proposal without changing owned sizes or r
   assert.equal((await store.execute('updateFurniture',{proposalId:p.id,revision:p.revision,objectId:'owned-sofa',originCell:{x:0,y:0}})).error?.code,'lock_violation');
   assert.deepEqual(store.getState().current,sample.current);
   store.resetDemo(makeCompactRoom());
-  assert.deepEqual(store.getState(),sample);
+  assert.deepEqual(store.getState().current,sample.current);
+  assert.deepEqual(store.getState().room,sample.room);
+  assert.deepEqual(store.getState().proposal!.layout,sample.proposal!.layout);
+  assert.ok(store.getState().currentRevision > sample.currentRevision);
 });
 
 test('sample sessions use separate local storage and unknown sample names preserve the original',()=>{

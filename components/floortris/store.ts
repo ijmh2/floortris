@@ -1,7 +1,8 @@
 import { CATALOGUE, PALETTES, fromVariant, makeDemo } from './data.ts';
 import { bounds, rectCells, validate } from './engine.ts';
-import { clone, faces, rotations, type AppState, type Candidate, type CommandResult, type Furniture, type Layout, type Proposal, type Report, type Rules } from './model.ts';
+import { clone, faces, rotations, type AppState, type Candidate, type CommandResult, type Furniture, type Layout, type Proposal, type Report, type Room, type Rules } from './model.ts';
 import { TOOL_SCHEMAS, validateSchema } from './schemas.ts';
+import { roomEditStamp, validateRoomInputs } from './room-inputs.ts';
 
 // All commands are checked against strict recursive schemas before this dispatcher reads dynamic keys.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema-validated JSON dispatch boundary; authoritative domain records remain strongly typed.
@@ -28,9 +29,29 @@ export function createStore(initialState: AppState = makeDemo()) {
   const listeners = new Set<() => void>(), candidates = new Map<string, Candidate>(), retries = new Map<string, { signature: string; result: CommandResult }>();
   const candidateReports = new Map<string, Report>();
   let candidateSeq = 0;
+  const past: AppState[] = [], future: AppState[] = [];
   const getState = () => state;
+  const getHistory = () => ({ canUndo: past.length > 0, canRedo: future.length > 0, undoCount: past.length, redoCount: future.length });
   const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
-  const publish = (next: AppState) => { state = frozen(next); candidates.clear(); candidateReports.clear(); listeners.forEach(listener => listener()); };
+  const publish = (next: AppState, record = true) => {
+    if (record) { past.push(state); if (past.length > 50) past.shift(); future.length = 0; }
+    state = frozen(next); candidates.clear(); candidateReports.clear(); listeners.forEach(listener => listener());
+  };
+  // Restore content, never old authority tokens: in-flight searches, retries and
+  // captured Apply buttons must not become valid again after undo/redo/reset.
+  const restored = (snapshot: AppState) => {
+    const next = clone(snapshot), fresh = proposalStatus(snapshot) !== 'stale';
+    next.currentRevision = Math.max(state.currentRevision, snapshot.currentRevision) + 1;
+    next.ruleRevision = Math.max(state.ruleRevision, snapshot.ruleRevision) + 1;
+    next.sequence = Math.max(state.sequence, snapshot.sequence) + 1;
+    if (next.proposal) {
+      next.proposal.id = `proposal-${next.sequence}`;
+      next.proposal.revision = Math.max(state.proposal?.revision || 0, next.proposal.revision) + 1;
+      next.proposal.baseCurrentRevision = next.currentRevision - (fresh ? 0 : 1);
+      next.proposal.baseRuleRevision = next.ruleRevision;
+    }
+    retries.clear(); return next;
+  };
   const rejection = (error: unknown): CommandResult => ({ operationSucceeded: false, error: { code: error instanceof CommandError ? error.code : 'invalid_command', message: error instanceof Error ? error.message : String(error) }, proposalId: state.proposal?.id, revision: state.proposal?.revision, currentRevision: state.currentRevision, ruleRevision: state.ruleRevision });
   const guard = (a: Args, kind?: Proposal['kind']) => {
     const p = state.proposal;
@@ -161,7 +182,7 @@ export function createStore(initialState: AppState = makeDemo()) {
         const p = clone(guard(a, ['setRoomGeometry', 'setOpening', 'setConstraints'].includes(name) ? 'setup' : 'layout'));
         if (name === 'findPlacements') { const searched = await search(p, a, signal); guard(a, 'layout'); searched.found.forEach(c => candidates.set(c.candidateId, c)); return { ...envelope(p), candidates: clone(searched.found), trials: searched.trials, searchBoundReached: searched.exhausted, explanation: searched.found.length ? 'Every returned placement passed relevant/new hard checks; layoutStatus includes unrelated existing issues.' : 'No candidate found within the bounded scan. This is not proof that no placement exists.' }; }
         if (name === 'setRoomGeometry') { p.room = { ...p.room, ...(a.widthCm !== undefined ? {widthCm:a.widthCm} : {}), ...(a.depthCm !== undefined ? {depthCm:a.depthCm} : {}), ...(a.name !== undefined ? {name:a.name} : {}) }; }
-        else if (name === 'setOpening') { if (a.opening.kind === 'window' && a.opening.headCm <= a.opening.sillCm) fail('invalid_opening', 'Window head must be above its sill.'); const idx = p.room.openings.findIndex(o => o.id === a.opening.id); if (idx >= 0) p.room.openings[idx] = clone(a.opening); else { if (p.room.openings.length >= 12) fail('room_limit', 'V1 supports at most 12 openings.'); p.room.openings.push(clone(a.opening)); } }
+        else if (name === 'setOpening') { if (state.room.openingLocks?.includes(a.opening.id) && !same(a.opening, state.room.openings.find(o => o.id === a.opening.id))) fail('lock_violation', 'This opening is pinned. Only the human can unpin it in Room inputs.'); if (a.opening.kind === 'window' && a.opening.headCm <= a.opening.sillCm) fail('invalid_opening', 'Window head must be above its sill.'); const idx = p.room.openings.findIndex(o => o.id === a.opening.id); if (idx >= 0) p.room.openings[idx] = clone(a.opening); else { if (p.room.openings.length >= 12) fail('room_limit', 'V1 supports at most 12 openings.'); p.room.openings.push(clone(a.opening)); } }
         else if (name === 'setConstraints') { p.rules = { ...p.rules, ...clone(a.constraints) }; checkRules(p.rules); }
         else if (name === 'setAppearance') {
           const group = PALETTES[a.target as keyof typeof PALETTES]; if (!group.some(palette => palette.id === a.paletteId)) fail('invalid_palette', 'Choose an ID from listCatalogue palettes.');
@@ -211,7 +232,17 @@ export function createStore(initialState: AppState = makeDemo()) {
     } catch (error) { return rejection(error); }
   }
   const human = (fn: () => CommandResult): CommandResult => { try { return fn(); } catch (error) { return rejection(error); } };
+  const undo = () => human(() => {
+    const previous = past.pop() || fail('history_empty', 'Nothing to undo in this session.');
+    future.push(state); publish(restored(previous), false); return { operationSucceeded: true, message: 'Undone. Review any restored proposal before applying.' };
+  });
+  const redo = () => human(() => {
+    const next = future.pop() || fail('history_empty', 'Nothing to redo in this session.');
+    past.push(state); publish(restored(next), false); return { operationSucceeded: true, message: 'Redone.' };
+  });
+  const guardHuman = (which: 'current' | 'proposal') => { if (which === 'proposal') guard({ proposalId: state.proposal?.id, revision: state.proposal?.revision }, 'layout'); };
   const humanUpdate = (which: 'current' | 'proposal', id: string, patch: HumanPatch) => human(() => {
+    guardHuman(which);
     const inputError = validateSchema({ proposalId: 'human', revision: 1, objectId: id, ...Object.fromEntries(Object.entries(patch).filter(([k]) => k !== 'appearance')) }, TOOL_SCHEMAS.updateFurniture.inputSchema); if (inputError) fail('invalid_arguments', inputError);
     if (patch.appearance && !PALETTES.furniture.some(p => p.id === patch.appearance)) fail('invalid_palette', 'Unknown palette.');
     const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Choose a layout proposal to edit furniture.');
@@ -220,6 +251,7 @@ export function createStore(initialState: AppState = makeDemo()) {
     publish(next); return which === 'proposal' ? envelope(next.proposal!) : { operationSucceeded: true, currentRevision: state.currentRevision };
   });
   const humanAdd = (which: 'current' | 'proposal', variantId: string, patch?: HumanPatch, rejectInvalid = false) => human(() => {
+    guardHuman(which);
     const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Create a layout proposal first.');
     if (layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 pieces.'); next.sequence++;
     const o = fromVariant(variantId, `human-${next.sequence}`), sofa = layout.furniture.find(f => f.kind === 'sofa');
@@ -239,6 +271,7 @@ export function createStore(initialState: AppState = makeDemo()) {
     layout.furniture.push(placed); if (which === 'current') next.currentRevision++; else next.proposal!.revision++; publish(next); return { operationSucceeded: true, objectId: o.id };
   });
   const humanRemove = (which: 'current' | 'proposal', id: string) => human(() => {
+    guardHuman(which);
     const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Select a layout draft.'); removeFrom(layout, id, next.proposal?.omitted || []); if (which === 'current') next.currentRevision++; else next.proposal!.revision++; publish(next); return { operationSucceeded: true };
   });
   const humanSetLocks = (id: string, locks: Furniture['locked'], which: 'current' | 'proposal' = 'current') => human(() => {
@@ -267,6 +300,7 @@ export function createStore(initialState: AppState = makeDemo()) {
     const next = clone(state), inventory = next.inventory.find(o => o.id === id) || fail('invalid_id', 'Owned piece not found.'); inventory.sizeCm = clone(size); const object = next.current.furniture.find(o => o.id === id); if (object) object.sizeCm = clone(size); next.currentRevision++; publish(next); return { operationSucceeded: true };
   });
   const humanSetRoomFinish = (which: 'current' | 'proposal', target: 'wall' | 'floor', paletteId: string) => human(() => {
+    guardHuman(which);
     if (!PALETTES[target].some(p => p.id === paletteId)) fail('invalid_palette', 'Choose an ID from listCatalogue palettes.');
     const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Choose a layout proposal to change its finish.');
     // Appearance never changes geometry, height classes or rule flags, so this
@@ -278,7 +312,18 @@ export function createStore(initialState: AppState = makeDemo()) {
   const applyProposal = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'layout'), report = validate(p.layout, p.room, p.rules, state.inventory); if (report.validation.hardFailures || report.brief.status !== 'satisfied') fail('blocked_apply', 'Resolve hard failures and complete the required lounge brief before Apply.'); const next = clone(state); next.current = clone(p.layout); next.currentRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, currentRevision: state.currentRevision }; });
   const confirmSetup = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'setup'); checkRules(p.rules); const next = clone(state); next.room = clone(p.room); next.rules = clone(p.rules); next.ruleRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, ruleRevision: state.ruleRevision, validation: validate(next.current, next.room, next.rules, next.inventory).validation }; });
   const discardProposal = () => { const next = clone(state); next.proposal = null; publish(next); return { operationSucceeded: true }; };
-  const resetDemo = (initial: AppState = makeDemo()) => { retries.clear(); publish(clone(initial)); };
-  return { getState, subscribe, execute, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanSetRoomFinish, applyProposal, confirmSetup, discardProposal, resetDemo };
+  const humanStageRoom = (room: Room, rules: Rules, expectedStamp: string, replaceProposal = false) => human(() => {
+    if (expectedStamp !== roomEditStamp(state)) fail('revision_conflict', 'The room or proposal changed while this editor was open. Close and reopen it before staging.');
+    const error = validateRoomInputs(room, rules); if (error) fail('invalid_room_inputs', error);
+    const active = state.proposal;
+    const canUpdate = active?.kind === 'setup' && proposalStatus(state) !== 'stale';
+    if (active && !canUpdate && !replaceProposal) fail('active_proposal_exists', 'Explicitly replace the active proposal before staging these room inputs.');
+    const next = clone(state); next.sequence++;
+    const p: Proposal = canUpdate ? clone(active) : { id: `proposal-${next.sequence}`, kind: 'setup', revision: 0, baseCurrentRevision: state.currentRevision, baseRuleRevision: state.ruleRevision, layout: clone(state.current), room: clone(room), rules: clone(rules), omitted: [] };
+    p.room = clone(room); p.rules = clone(rules); p.revision++; next.proposal = p; publish(next);
+    return envelope(p, { message: 'Room inputs staged. Review and confirm to update Yours.' });
+  });
+  const resetDemo = (initial: AppState = makeDemo()) => { publish(restored(initial)); };
+  return { getState, getHistory, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanSetRoomFinish, applyProposal, confirmSetup, discardProposal, resetDemo };
 }
 export type FloortrisStore = ReturnType<typeof createStore>;

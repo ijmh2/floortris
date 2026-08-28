@@ -91,8 +91,10 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     const seam = material('#bbae96');
     for (let z = -d / 2 + .035; z < d / 2; z += .035) { const stitch = box(g, [w * .96, .001, .003], [0, h + .002, z], seam); stitch.castShadow = false; }
   } else if (item.kind === 'radiator') {
-    box(g, [w * .75, h, d], [0, h / 2, 0], cream, .01);
-    for (let z = -d / 2 + .035; z < d / 2; z += .07) box(g, [w, h * .91, .035], [0, h * .51, z], body, .01);
+    const horizontal = item.wallAnchor?.wall === 'north' || item.wallAnchor?.wall === 'south';
+    box(g, [horizontal ? w : w * .75, h, horizontal ? d * .75 : d], [0, h / 2, 0], cream, .01);
+    const length = horizontal ? w : d;
+    for (let t = -length / 2 + .035; t < length / 2; t += .07) box(g, horizontal ? [.035, h * .91, d] : [w, h * .91, .035], horizontal ? [t, h * .51, 0] : [0, h * .51, t], body, .01);
   } else if (item.kind === 'plant') {
     const potH = h * .29; cylinder(g, Math.min(w,d) * .37, Math.min(w,d) * .27, potH, [0,potH / 2,0], material('#c39179'));
     cylinder(g,.012,.014,h * .65,[0,h * .60,0],wood);
