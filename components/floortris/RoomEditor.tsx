@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { bounds, validate, wallBand } from './engine.ts';
 import { wallSnap } from './interactions.ts';
-import { clone, type AppState, type CommandResult, type Furniture, type Opening, type Room, type Wall } from './model.ts';
+import { clone, type AppState, type CommandResult, type Furniture, type Opening, type Room, type Rules, type Wall } from './model.ts';
 import { horizontalWall, radiatorMeasures, radiatorOnWall, roomEditStamp, validateRoomInputs, wallLength, walls } from './room-inputs.ts';
 import { proposalStatus, type FloortrisStore } from './store.ts';
+import { profileRules } from './samples.ts';
+import { conceptClearance, conceptOnWall } from './fixture-geometry.ts';
 import './room-editor.css';
 
 function Measurement({ label, value, onChange, min = 0, max = 1000 }: { label: string; value: number; onChange: (n: number) => void; min?: number; max?: number }) {
@@ -70,9 +72,18 @@ export default function RoomEditor({ state, store, onResult, close }: { state: A
     }
     setSelected(id); setMessage('New feature added to the editor. Choose its wall and measurements.');
   };
+  const addConceptFixture = (kind: 'basin' | 'toilet' | 'shower' | 'bath' | 'towel_rail', vanity = false) => {
+    const specs = { basin: ['Wall basin 60', 60, 45, 85, 60, 60], toilet: ['Compact WC', 40, 65, 80, 60, 80], shower: ['Shower tray 90', 90, 90, 5, 90, 60], bath: ['Compact bath', 170, 75, 55, 170, 60], towel_rail: ['Towel rail', 50, 10, 100, 0, 0] } as const;
+    const selected = vanity ? ['Vanity basin 80', 80, 50, 85, 80, 60] as const : specs[kind];
+    const [label, w, d, h] = selected, id = `${vanity ? 'vanity-basin' : kind}-${crypto.randomUUID()}`;
+    const f: Furniture = { id, label, kind, ownership: 'fixed', sizeCm: { w, d, h }, originCell: { x: 1, y: 0 }, rotation: 0, elevationCm: 0, wallAnchor: {wall:'north',offsetCm:20}, locked: { position: true, size: true, rotation: true }, appearance: 'oat', requiredInRoom: true, tags: ['concept-fixture'], conceptualOnly: true };
+    f.clearance = conceptClearance(f);
+    setRoom(r => ({ ...r, fixtures: [...r.fixtures, f], profile: r.profile?.kind === 'bathroom_concept' ? { ...r.profile, fixtureIds: [...r.profile.fixtureIds, id] } : r.profile }));
+    setSelected(id); setMessage('Concept fixture staged as fixed and pinned. It is not movable by an agent.');
+  };
   const remove = () => {
     if (!selected || pinned) return;
-    setRoom(r => ({ ...r, openings: r.openings.filter(o => o.id !== selected), fixtures: r.fixtures.filter(f => f.id !== selected), openingLocks: (r.openingLocks || []).filter(id => id !== selected) }));
+    setRoom(r => ({ ...r, openings: r.openings.filter(o => o.id !== selected), fixtures: r.fixtures.filter(f => f.id !== selected), openingLocks: (r.openingLocks || []).filter(id => id !== selected), profile:r.profile?.kind==='bathroom_concept'?{...r.profile,fixtureIds:r.profile.fixtureIds.filter(id=>id!==selected)}:r.profile }));
     setSelected(null);
   };
   const startDrag = (e: PointerEvent<HTMLButtonElement>, id: string) => {
@@ -99,6 +110,28 @@ export default function RoomEditor({ state, store, onResult, close }: { state: A
     if (result.operationSucceeded) { setStamp(roomEditStamp(store.getState())); setReplace(false); setMessage('Staged. Review the changes below, then confirm.'); }
     else setMessage(result.error?.message || 'Could not stage inputs.');
   };
+  const setProfile = (kind: 'lounge' | 'bedroom' | 'home_office' | 'bathroom_concept') => setRoom(r => {
+    const profile = kind === 'bedroom' ? { kind, sleeping: 'single' as const, workspace: false, storage: false, bedsideQuantity: 0 } : kind === 'home_office' ? { kind, seating: false, storage: false } : kind === 'bathroom_concept' ? { kind, fixtureIds: r.fixtures.filter(f => f.kind !== 'radiator').map(f => f.id), conceptualOnly: true as const } : { kind: 'lounge' as const };
+    setRules(old => ({ ...old, requiredKinds: [...profileRules(profile)] as Rules['requiredKinds'] }));
+    return { ...r, profile };
+  });
+  const changeProfile = (patch: Record<string, unknown>) => setRoom(r => {
+    const profile = r.profile || { kind: 'lounge' as const };
+    const next = { ...r, profile: { ...profile, ...patch } } as Room;
+    setRules(old => ({ ...old, requiredKinds: [...profileRules(next.profile!)] as Rules['requiredKinds'] }));
+    return next;
+  });
+  const updateConceptFixture = (patch: Partial<Pick<Furniture, 'originCell' | 'rotation' | 'sizeCm'>>) => {
+    if (!fixture || fixture.kind === 'radiator' || pinned) return;
+    setRoom(r => ({ ...r, fixtures: r.fixtures.map(f => {
+      if (f.id !== fixture.id) return f;
+      const next = { ...f, ...patch, ...(patch.sizeCm ? { sizeCm: patch.sizeCm } : {}) };
+      if (patch.originCell || patch.rotation !== undefined) delete next.wallAnchor;
+      if (next.wallAnchor) return conceptOnWall(next,r,next.wallAnchor.wall,next.wallAnchor.offsetCm);
+      return { ...next, clearance: conceptClearance(next) };
+    }) }));
+  };
+  const anchorConcept = (wall:Wall,offsetCm:number) => { if (!fixture || pinned) return; setRoom(r=>({...r,fixtures:r.fixtures.map(f=>f.id===fixture.id?conceptOnWall(f,r,wall,offsetCm):f)})); };
   const rectStyle = (r: { x: number; y: number; w: number; d: number }): CSSProperties => ({ left: `${r.x / room.widthCm * 100}%`, top: `${r.y / room.depthCm * 100}%`, width: `${r.w / room.widthCm * 100}%`, height: `${r.d / room.depthCm * 100}%` });
 
   return <div className="ft-modal-backdrop"><section ref={modal} tabIndex={-1} className="ft-modal ft-room-editor" role="dialog" aria-modal="true" aria-labelledby="room-editor-title" onKeyDown={e => {
@@ -114,6 +147,10 @@ export default function RoomEditor({ state, store, onResult, close }: { state: A
     <p className="ft-muted">Drag features along the walls, or enter exact measurements. Pins protect them from agent edits. Nothing changes in Yours until you confirm.</p>
     {conflict && <p role="alert" className="ft-room-error">The room or proposal changed while you were editing. Close and reopen this editor to load the latest version.</p>}
     <label className="ft-field"><span>Room name</span><input maxLength={100} value={room.name} onChange={e => setRoom({ ...room, name: e.target.value })} /></label>
+    <label className="ft-field"><span>Room purpose · staged by you</span><select value={(room.profile || { kind: 'lounge' }).kind} onChange={e => setProfile(e.target.value as 'lounge' | 'bedroom' | 'home_office' | 'bathroom_concept')}><option value="lounge">Lounge</option><option value="bedroom">Bedroom</option><option value="home_office">Home office</option><option value="bathroom_concept">Bathroom concept</option></select></label>
+    {room.profile?.kind === 'bedroom' && <div className="ft-inline-checks"><label className="ft-field"><span>Sleep size</span><select value={room.profile.sleeping} onChange={e => changeProfile({ sleeping: e.target.value as 'single' | 'double' | 'king' })}><option value="single">Single</option><option value="double">Double</option><option value="king">King</option></select></label><label className="ft-check"><input type="checkbox" checked={room.profile.workspace} onChange={e => changeProfile({ workspace: e.target.checked })}/>Workspace</label><label className="ft-check"><input type="checkbox" checked={room.profile.storage} onChange={e => changeProfile({ storage: e.target.checked })}/>Wardrobe</label><label className="ft-field"><span>Bedside tables</span><select value={room.profile.bedsideQuantity || 0} onChange={e => changeProfile({ bedsideQuantity: Number(e.target.value) })}><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label></div>}
+    {room.profile?.kind === 'home_office' && <div className="ft-inline-checks"><label className="ft-check"><input type="checkbox" checked={room.profile.seating} onChange={e => changeProfile({ seating: e.target.checked })}/>Guest seating</label><label className="ft-check"><input type="checkbox" checked={room.profile.storage} onChange={e => changeProfile({ storage: e.target.checked })}/>Storage</label></div>}
+    {room.profile?.kind === 'bathroom_concept' && <p className="ft-room-error">Bathroom concepts show fixed spatial fixtures only. They do not assess installation, regulations, safety, plumbing or accessibility.</p>}
     <div className="ft-room-dimensions"><Measurement label="Room width" min={240} value={room.widthCm} onChange={widthCm => resizeRoom({ widthCm })} /><Measurement label="Room depth" min={240} value={room.depthCm} onChange={depthCm => resizeRoom({ depthCm })} /><Measurement label="Ceiling" min={100} max={500} value={rules.ceilingCm} onChange={ceilingCm => setRules({ ...rules, ceilingCm })} /></div>
     <div className="ft-room-workspace">
       <div className="ft-room-map-column"><div className="ft-room-map-frame"><span className="ft-wall-label ft-wall-north">NORTH · {room.widthCm} cm</span><span className="ft-wall-label ft-wall-west">WEST</span><span className="ft-wall-label ft-wall-east">EAST</span><span className="ft-wall-label ft-wall-south">SOUTH</span>
@@ -129,9 +166,10 @@ export default function RoomEditor({ state, store, onResult, close }: { state: A
       </div><p className="ft-small-note">20 cm drag snap · exact inputs accept 1 cm. Faded pieces show Yours for context. Offsets run left → right on north/south; top → bottom on east/west.</p>
       <div className="ft-room-legend"><span>▰ Door</span><span>▱ Window</span><span>▥ Radiator</span><span>▣ Pinned</span></div>
       <div className="ft-inline-buttons"><button className="ft-button ft-secondary" disabled={room.openings.length >= 12} onClick={() => add('door')}>+ Door</button><button className="ft-button ft-secondary" disabled={room.openings.length >= 12} onClick={() => add('window')}>+ Window</button><button className="ft-button ft-secondary" disabled={room.fixtures.length >= 12} onClick={() => add('radiator')}>+ Radiator</button></div>
+      {room.profile?.kind === 'bathroom_concept' && <div className="ft-inline-buttons"><button className="ft-button ft-secondary" disabled={room.fixtures.length>=12} onClick={() => addConceptFixture('basin')}>+ Basin</button><button className="ft-button ft-secondary" disabled={room.fixtures.length>=12} onClick={() => addConceptFixture('basin', true)}>+ Vanity</button><button className="ft-button ft-secondary" disabled={room.fixtures.length>=12} onClick={() => addConceptFixture('toilet')}>+ WC</button><button className="ft-button ft-secondary" disabled={room.fixtures.length>=12} onClick={() => addConceptFixture('shower')}>+ Shower tray</button><button className="ft-button ft-secondary" disabled={room.fixtures.length>=12} onClick={() => addConceptFixture('bath')}>+ Bath</button><button className="ft-button ft-secondary" disabled={room.fixtures.length>=12} onClick={() => addConceptFixture('towel_rail')}>+ Towel rail</button></div>}
       <div className="ft-room-feature-list" aria-label="Room features">{[...room.openings, ...room.fixtures].map((f, i) => <button key={f.id} aria-pressed={selected === f.id} onClick={() => setSelected(f.id)}><b>{i + 1}</b> {title(f.kind)}<span>{'wall' in f ? f.wall : f.wallAnchor?.wall} {isPinned(room, f.id) ? '▣' : ''}</span></button>)}</div>
       </div>
-      <div className="ft-room-inspector">{feature && anchor ? <>
+      <div className="ft-room-inspector">{fixture && fixture.kind !== 'radiator' ? <><div className="ft-room-inspector-title"><h3>Concept fixture · {title(fixture.kind)}</h3><button className="ft-button ft-secondary" onClick={pin}>{pinned ? 'Unpin fixture' : 'Pin fixture'}</button></div><p className="ft-small-note">Fixed for agents. Human changes remain staged until Confirm; this is a spatial concept only.</p><fieldset disabled={pinned}><label className="ft-field"><span>Back wall anchor</span><select value={fixture.wallAnchor?.wall||''} onChange={e=>{if(e.target.value)anchorConcept(e.target.value as Wall,fixture.wallAnchor?.offsetCm||20);else updateConceptFixture({originCell:fixture.originCell});}}><option value="">Free floor position</option>{walls.map(w=><option key={w} value={w}>{title(w)}</option>)}</select></label>{fixture.wallAnchor && <Measurement label="Wall offset" value={fixture.wallAnchor.offsetCm} onChange={n=>anchorConcept(fixture.wallAnchor!.wall,n)}/>}<div className="ft-room-dimensions"><Measurement label="X position" value={fixture.originCell.x * 20} onChange={x => updateConceptFixture({ originCell: { ...fixture.originCell, x: x / 20 } })}/><Measurement label="Y position" value={fixture.originCell.y * 20} onChange={y => updateConceptFixture({ originCell: { ...fixture.originCell, y: y / 20 } })}/><Measurement label="Width" min={1} value={fixture.sizeCm.w} onChange={w => updateConceptFixture({ sizeCm: { ...fixture.sizeCm, w } })}/><Measurement label="Depth" min={1} value={fixture.sizeCm.d} onChange={d => updateConceptFixture({ sizeCm: { ...fixture.sizeCm, d } })}/><Measurement label="Height" min={1} value={fixture.sizeCm.h || 1} onChange={h => updateConceptFixture({ sizeCm: { ...fixture.sizeCm, h } })}/></div><label className="ft-field"><span>Rotation</span><select value={fixture.rotation} onChange={e => updateConceptFixture({ rotation: Number(e.target.value) as 0 | 90 | 180 | 270 })}>{[0,90,180,270].map(n => <option key={n} value={n}>{n}°</option>)}</select></label><button className="ft-text-button ft-room-remove" onClick={remove}>Remove concept fixture</button></fieldset></> : feature && anchor ? <>
         <div className="ft-room-inspector-title"><h3>{title(feature.kind)}</h3><button className="ft-button ft-secondary" onClick={pin}>{pinned ? 'Unpin feature' : 'Pin feature'}</button></div>
         {pinned && <p className="ft-small-note">Pinned. Unpin to move, resize or remove it. Any changes still need your confirmation.</p>}
         <fieldset disabled={pinned || (fixture && fixture.kind !== 'radiator')}>
@@ -162,7 +200,7 @@ export default function RoomEditor({ state, store, onResult, close }: { state: A
         ['walkHardCm', 'Hard walking width', 20, 200], ['walkPreferredCm', 'Preferred walking width', 20, 200], ['H_lowCm', 'Low-object cutoff', 0, 300],
         ['radiatorFrontCm', 'Radiator front clearance', 0, 100], ['windowFrontCm', 'Window front clearance', 0, 100], ['chairPullCm', 'Desk chair pull zone', 20, 200],
       ] as const).map(([key, label, min, max]) => <Measurement key={key} label={label} value={rules[key]} min={min} max={max} onChange={n => setRules({ ...rules, [key]: n })} />)}</div>
-      <div className="ft-inline-checks">{(['sofa', 'tv', 'desk', 'storage'] as const).map(kind => <label key={kind} className="ft-check"><input type="checkbox" checked={rules.requiredKinds.includes(kind)} onChange={e => setRules({ ...rules, requiredKinds: e.target.checked ? [...rules.requiredKinds, kind] : rules.requiredKinds.filter(k => k !== kind) })} />{title(kind)}</label>)}</div>
+      <div className="ft-inline-checks">{(room.profile?.kind==='bedroom'?['bed','desk','chair','storage'] as const:room.profile?.kind==='home_office'?['desk','chair','storage'] as const:room.profile?.kind==='bathroom_concept'?[]:['sofa','tv','desk','storage'] as const).map(kind => <label key={kind} className="ft-check"><input type="checkbox" checked={rules.requiredKinds.includes(kind)} onChange={e => setRules({ ...rules, requiredKinds: e.target.checked ? [...rules.requiredKinds, kind] : rules.requiredKinds.filter(k => k !== kind) })} />{title(kind)}</label>)}</div>
     </details>
     <p className="ft-small-note">Measurements are assumptions until you replace them. These checks are not building regulations, accessibility certification or heating safety advice. Resizing does not move pinned radiators.</p>
     {inputError && <p className="ft-room-error" role="alert">{inputError}</p>}

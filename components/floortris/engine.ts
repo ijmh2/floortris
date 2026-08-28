@@ -1,4 +1,4 @@
-import { faces, key, type ActivityZone, type Cell, type Door, type Furniture, type GridCell, type Issue, type Layout, type Opening, type Rect, type Report, type Room, type Rules, type Wall } from './model.ts';
+import { faces, key, opposite, type ActivityZone, type BriefRequirement, type Cell, type Door, type Furniture, type GridCell, type Issue, type Layout, type Opening, type Rect, type Report, type Room, type Rules, type Wall } from './model.ts';
 
 export const isSolid = (o: Furniture) => o.kind !== 'rug' && o.kind !== 'tv';
 export function bounds(o: Furniture, cellCm = 20): Rect {
@@ -20,6 +20,23 @@ export function frontBand(o: Furniture, depth: number, cellCm = 20): Rect {
     case 'west': return { x: b.x - depth, y: b.y, w: depth, d: b.d };
     case 'east': return { x: b.x + b.w, y: b.y, w: depth, d: b.d };
   }
+}
+/**
+ * `faces` describes the front/foot of an item (rotation 0 is south), so a bed
+ * head is its opposite. Bed-side access follows that head-to-foot axis, not
+ * whichever rendered dimension happens to be longer.
+ */
+export function bedAccessBands(o: Furniture, depth: number, headExclusionCm = 60, cellCm = 20): { side: 'left' | 'right'; rect: Rect; headExcluded: Rect }[] {
+  const b = bounds(o, cellCm), head = opposite[faces[o.rotation]], longVertical = head === 'north' || head === 'south';
+  const along = longVertical ? b.d : b.w, excluded = Math.min(headExclusionCm, Math.max(0, along - 100));
+  const startsAtHead = head === 'north' || head === 'west';
+  const trim = (r: Rect) => longVertical
+    ? { ...r, y: r.y + (startsAtHead ? excluded : 0), d: r.d - excluded }
+    : { ...r, x: r.x + (startsAtHead ? excluded : 0), w: r.w - excluded };
+  const raw = longVertical
+    ? [{ side: 'left' as const, rect: { x: b.x - depth, y: b.y, w: depth, d: b.d } }, { side: 'right' as const, rect: { x: b.x + b.w, y: b.y, w: depth, d: b.d } }]
+    : [{ side: 'left' as const, rect: { x: b.x, y: b.y - depth, w: b.w, d: depth } }, { side: 'right' as const, rect: { x: b.x, y: b.y + b.d, w: b.w, d: depth } }];
+  return raw.map(item => ({ ...item, headExcluded: longVertical ? { ...item.rect, y: startsAtHead ? item.rect.y : item.rect.y + item.rect.d - excluded, d: excluded } : { ...item.rect, x: startsAtHead ? item.rect.x : item.rect.x + item.rect.w - excluded, w: excluded }, rect: trim(item.rect) }));
 }
 export function wallBand(room: Room, wall: Wall, offset: number, width: number, depth: number): Rect {
   switch (wall) {
@@ -152,12 +169,21 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   const hard = footprintPass(columns, rows, blocked, hardSize, room, doors, unit);
   const preferred = preferredSize === hardSize ? hard : footprintPass(columns, rows, blocked, preferredSize, room, doors, unit);
   for (const g of cells) g.flags.push(preferred.covered.has(key(g)) ? 'walk_clear' : hard.covered.has(key(g)) ? 'walk_tight' : 'walk_blocked');
-  const addZone = (id: string, objectId: string, label: string, rect: Rect, flexible = false) => {
+  const addZone = (id: string, objectId: string, label: string, rect: Rect, flexible = false, purpose?: string, blocking = true) => {
     const reachable = zoneReachable(rect, hard, unit, flexible), preferredReachable = zoneReachable(rect, preferred, unit, true), at = rectCells(rect, unit).filter(c => lookup.has(key(c)));
-    const zone = { id, objectId, label, rect, reachable, preferredReachable, cells: at }; zones.push(zone); flag(at, reachable ? 'path_reachable' : 'path_unreachable');
-    if (!reachable) { issue('path_broken', `${label} has no connected ${rules.walkHardCm} cm square-footprint approach from the open entrance. Move nearby furniture, then check again.`, [objectId, ...occupants(at, [objectId])], at, 'block', ['path_unreachable']); Object.assign(issues[issues.length - 1], { destinationId: id, configuredWalkHardCm: rules.walkHardCm }); }
-    else if (!preferredReachable) issue('walk_tight', `${label} is reachable at the ${rules.walkHardCm} cm hard minimum, but not the ${rules.walkPreferredCm} cm preferred width.`, [objectId], at, 'warning', ['walk_tight']);
+    const zone = { id, objectId, label, rect, reachable, preferredReachable, cells: at, purpose }; zones.push(zone); flag(at, reachable ? 'path_reachable' : 'path_unreachable');
+    if (!reachable && blocking) { issue('path_broken', `${label} has no connected ${rules.walkHardCm} cm square-footprint approach from the open entrance. Move nearby furniture, then check again.`, [objectId, ...occupants(at, [objectId])], at, 'block', ['path_unreachable']); Object.assign(issues[issues.length - 1], { destinationId: id, configuredWalkHardCm: rules.walkHardCm }); }
+    else if (reachable && !preferredReachable) issue('walk_tight', `${label} is reachable at the ${rules.walkHardCm} cm hard minimum, but not the ${rules.walkPreferredCm} cm preferred width.`, [objectId], at, 'warning', ['walk_tight']);
   };
+  for (const fixture of room.fixtures.filter(f => f.kind !== 'radiator' && f.clearance)) {
+    const rect = fixture.clearance!.rect, at = rectCells(rect, unit), ids = occupants(at, [fixture.id]);
+    if (ids.length) issue('fixture_clearance_blocked', `${fixture.label} concept approach is occupied by another solid object.`, [fixture.id, ...ids], at, 'block', ['fixture_clearance_blocked']);
+    // The measured concept bands may be narrower than the rasterised hard
+    // footprint. Their reachable state therefore permits edge contact, but the
+    // fixture itself remains solid and never becomes walk-through space.
+    addZone(`fixture:${fixture.id}`, fixture.id, fixture.clearance!.label, rect, true, 'fixed_fixture_approach');
+    if (!zones.at(-1)!.reachable) issue('fixture_clearance_unreachable', `${fixture.label} concept approach is not reachable from the entrance.`, [fixture.id], at, 'block', ['fixture_clearance_unreachable']);
+  }
   for (const door of doors) addZone(`approach:${door.id}`, door.id, door.entrance ? 'Entrance' : 'Door approach', wallBand({ ...room, widthCm: Math.floor(room.widthCm / unit) * unit, depthCm: Math.floor(room.depthCm / unit) * unit }, door.wall, door.offsetCm, door.widthCm, hardSize * unit));
   for (const o of layout.furniture) {
     if (o.kind === 'sofa') {
@@ -178,7 +204,8 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       }
       if (faces[o.rotation] === 'south') target.y = Math.ceil(target.y / unit) * unit;
       if (faces[o.rotation] === 'east') target.x = Math.ceil(target.x / unit) * unit;
-      addZone(`${o.kind}:${o.id}`, o.id, `${o.label} ${o.kind === 'desk' ? 'chair approach' : 'front'}`, target);
+      addZone(`${o.kind}:${o.id}`, o.id, `${o.label} ${o.kind === 'desk' ? 'chair approach' : 'front'}`, target, o.tags.includes('bedside'));
+      if (o.tags.includes('bedside') && !zones.at(-1)!.reachable) issue('bedside_route_conflict', `${o.label} drawer/front approach conflicts with the entrance route.`, [o.id], at, 'warning');
       if (o.kind === 'desk' && rules.deskNearWindow) {
         const b = bounds(o, unit), cx = b.x + b.w / 2, cy = b.y + b.d / 2;
         const near = room.openings.some(w => w.kind === 'window' && (w.wall === 'west' ? cx <= 160 && cy >= w.offsetCm - 100 && cy <= w.offsetCm + w.widthCm + 100 : w.wall === 'east' ? room.widthCm - cx <= 160 && cy >= w.offsetCm - 100 && cy <= w.offsetCm + w.widthCm + 100 : w.wall === 'north' ? cy <= 160 && cx >= w.offsetCm - 100 && cx <= w.offsetCm + w.widthCm + 100 : room.depthCm - cy <= 160 && cx >= w.offsetCm - 100 && cx <= w.offsetCm + w.widthCm + 100));
@@ -186,11 +213,17 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       }
     }
     if (o.kind === 'bed') {
-      const b = bounds(o, unit), depth = rules.bedLongSideAccessCm;
-      const bands = b.d >= b.w ? [{ x: b.x - depth, y: b.y, w: depth, d: b.d }, { x: b.x + b.w, y: b.y, w: depth, d: b.d }] : [{ x: b.x, y: b.y - depth, w: b.w, d: depth }, { x: b.x, y: b.y + b.d, w: b.w, d: depth }];
-      const free = bands.filter(r => r.x >= 0 && r.y >= 0 && r.x + r.w <= room.widthCm && r.y + r.d <= room.depthCm && occupants(rectCells(r, unit)).length === 0);
-      if (!free.length) issue('bed_access_blocked', `Keep one long side of the bed clear by ${depth} cm.`, [o.id], bands.flatMap(r => rectCells(r, unit)));
-      else if (!free.some(r => zoneReachable(r, hard, unit, true))) issue('path_broken', `The bed side clearance exists, but no ${rules.walkHardCm} cm walking footprint reaches it.`, [o.id]);
+      const depth = rules.bedLongSideAccessCm, bands = bedAccessBands(o, depth, 60, unit);
+      const vertical = opposite[faces[o.rotation]] === 'north' || opposite[faces[o.rotation]] === 'south';
+      const valid = bands.filter(({ rect }) => rect.x >= 0 && rect.y >= 0 && rect.x + rect.w <= room.widthCm && rect.y + rect.d <= room.depthCm && (vertical ? rect.d : rect.w) >= 100 && occupants(rectCells(rect, unit)).length === 0);
+      for (const band of bands) flag(rectCells(band.rect, unit).filter(c => lookup.has(key(c))), valid.some(v => v.side === band.side) ? 'bed_long_side_candidate' : 'bed_long_side_blocked');
+      // Keep both candidate bands in the report. Invalid/occupied bands render
+      // as red unreachable chips instead of vanishing from the room review.
+      bands.forEach(({ side, rect }) => addZone(`bed:${o.id}:${side}`, o.id, `${o.label} ${side} entry`, rect, true, 'bed_side_entry', false));
+      const reachable = zones.filter(z => z.objectId === o.id && z.purpose === 'bed_side_entry' && z.reachable);
+      if (!valid.length) issue('bed_access_blocked', `Keep a 100 cm entry segment on one long bed side at ${depth} cm depth. A maximum 60 cm head-end bedside segment is excluded.`, [o.id], bands.flatMap(r => rectCells(r.rect, unit)), 'block', ['bed_long_side_blocked']);
+      else if (!reachable.length) { flag(valid.flatMap(v => rectCells(v.rect, unit)), 'bed_long_side_unreachable'); issue('path_broken', `The bed-side entry exists, but no ${rules.walkHardCm} cm walking footprint reaches it.`, [o.id], [], 'block', ['bed_long_side_unreachable']); }
+      else { flag(reachable.flatMap(z => z.cells), 'bed_long_side_clear'); if (reachable.length < 2) issue('prefer_bed_two_sides', 'A second reachable bed side is preferred when the room permits it.', [o.id], [], 'warning', ['bed_long_side_blocked']); }
     }
   }
   for (const w of room.openings) if (w.kind === 'window' && w.windowAccess) addZone(`window:${w.id}`, w.id, 'Requested window access', wallBand(room, w.wall, w.offsetCm, w.widthCm, hardSize * unit));
@@ -222,12 +255,33 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     if (unknown.length) issue('tv_unknown', 'An object in the TV strip has unknown height. Verify its height; the TV check fails closed.', [tv.id, ...occupants(unknown)], unknown, 'block', ['tv_unknown']);
     if (!insideSeats.length) issue('tv_no_seat', 'No sofa seating cell is inside the TV-width strip. Align the TV or sofa.', [tv.id, sofa.id], seatCells);
   }
-  const missingRequired = [ ...rules.requiredKinds.filter(kind => !layout.furniture.some(o => o.kind === kind)).map(kind => `kind:${kind}`), ...inventory.filter(o => o.requiredInRoom && !layout.furniture.some(f => f.id === o.id)).map(o => o.id) ];
+  const profile = room.profile || { kind: 'lounge' as const };
+  const effectiveKinds = profile.kind === 'lounge' ? rules.requiredKinds : rules.requiredKinds.filter(k => k !== 'sofa' && k !== 'tv');
+  const requirements: BriefRequirement[] = effectiveKinds.map(kind => ({ key: `kind:${kind}`, label: kind.replace('_', ' '), quantity: 1, met: layout.furniture.some(o => o.kind === kind) ? 1 : 0, source: 'layout', required: true }));
+  if (profile.kind === 'bedroom') {
+    const wantedBed = `haven-${profile.sleeping}-${profile.sleeping === 'single' ? '100' : profile.sleeping === 'double' ? '140' : '160'}`;
+    requirements.push({ key: 'bed:sleep-size', label: `${profile.sleeping} bed`, quantity: 1, met: layout.furniture.some(o => o.kind === 'bed' && (o.variantId === wantedBed || o.sleepSize === profile.sleeping || o.tags.includes(profile.sleeping))) ? 1 : 0, source: 'layout', required: true });
+    const bedsideQuantity = Math.max(0, Math.min(2, profile.bedsideQuantity || 0));
+    if (bedsideQuantity) requirements.push({ key: 'bedside', label: 'bedside table', quantity: bedsideQuantity, met: layout.furniture.filter(o => o.variantId === 'nook-bedside-40' || o.tags.includes('bedside')).length, source: 'layout', required: false });
+    if (profile.storage) requirements.push({ key: 'wardrobe', label: 'wardrobe', quantity: 1, met: layout.furniture.filter(o => o.tags.includes('wardrobe') || o.tags.includes('clothes-storage')).length, source: 'layout', required: true });
+  }
+  if (profile.kind === 'home_office' || (profile.kind === 'bedroom' && profile.workspace)) {
+    const linked = layout.furniture.filter(o => o.kind === 'desk' && layout.furniture.some(c => c.kind === 'chair' && c.linkedDeskId === o.id));
+    requirements.push({ key: 'desk-chair-link', label: 'desk with linked chair', quantity: 1, met: linked.length ? 1 : 0, source: 'relationship', required: true });
+    if (!linked.length) issue('desk_chair_missing', 'Each required desk needs a chair linked to that desk.', layout.furniture.filter(o => o.kind === 'desk' || o.kind === 'chair').map(o => o.id));
+  }
+  if (profile.kind === 'home_office') {
+    if (profile.seating) requirements.push({ key: 'guest-chair', label: 'guest chair', quantity: 1, met: layout.furniture.filter(o => o.kind === 'chair' && !o.linkedDeskId).length, source: 'layout', required: false });
+    if (profile.storage) requirements.push({ key: 'office-storage', label: 'office storage', quantity: 1, met: layout.furniture.filter(o => o.kind === 'storage' && (o.tags.includes('office-storage') || o.variantId === 'archive-tall-80')).length, source: 'layout', required: false });
+  }
+  if (profile.kind === 'bathroom_concept') for (const id of profile.fixtureIds) requirements.push({ key: `fixture:${id}`, label: `fixed concept fixture ${id}`, quantity: 1, met: room.fixtures.some(f => f.id === id) ? 1 : 0, source: 'fixed_fixture', required: true });
+  const missingRequired = [ ...requirements.filter(r => r.required && r.met < r.quantity).map(r => r.key), ...inventory.filter(o => o.requiredInRoom && !layout.furniture.some(f => f.id === o.id)).map(o => o.id) ];
   if (rules.requiredKinds.includes('tv') && layout.furniture.some(o => o.kind === 'tv') && !layout.furniture.some(o => o.kind === 'tv' && o.targetSofaId && layout.furniture.some(s => s.id === o.targetSofaId && s.kind === 'sofa'))) missingRequired.push('tv:sofa-association');
   const hardFailures = issues.filter(i => i.severity === 'block').length;
   const openFloorM2 = largestEmptyRectangle(columns, rows, blocked, unit);
   if (rules.openFloorM2 > 0 && openFloorM2 < rules.openFloorM2) issue('prefer_open_floor', `The largest empty grid rectangle is ${openFloorM2.toFixed(2)} m²; your preference is ${rules.openFloorM2} m².`, [], [], 'warning');
   const flagsSummary: Record<string, number> = {}; cells.forEach(c => c.flags.forEach(f => { flagsSummary[f] = (flagsSummary[f] || 0) + 1; }));
   const finalWarnings = issues.filter(i => i.severity === 'warning').length;
-  return { validation: { status: hardFailures ? 'blocked' : finalWarnings ? 'warnings' : 'ok', hardFailures, warnings: finalWarnings }, brief: { status: missingRequired.length ? 'incomplete' : 'satisfied', missingRequired }, issues, cells, zones, columns, rows, flagsSummary, clearances: { hardRequestedCm: rules.walkHardCm, hardEffectiveCm: hardSize * unit, preferredRequestedCm: rules.walkPreferredCm, preferredEffectiveCm: preferredSize * unit }, openFloorM2 };
+  const conceptualOnly = profile.kind === 'bathroom_concept' || all.some(o => o.conceptualOnly);
+  return { validation: { status: hardFailures ? 'blocked' : finalWarnings ? 'warnings' : 'ok', hardFailures, warnings: finalWarnings }, brief: { status: missingRequired.length ? 'incomplete' : 'satisfied', missingRequired, requirements }, issues, cells, zones, columns, rows, flagsSummary, clearances: { hardRequestedCm: rules.walkHardCm, hardEffectiveCm: hardSize * unit, preferredRequestedCm: rules.walkPreferredCm, preferredEffectiveCm: preferredSize * unit }, openFloorM2, ...(conceptualOnly ? { conceptualOnly: true } : {}) };
 }

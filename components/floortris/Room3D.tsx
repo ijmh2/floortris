@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildRoomScene, disposeObject, updateCutaway, type RoomScene } from './scene3d.ts';
 import type { Layout, Room, Rules } from './model.ts';
 
-type Props = { room: Room; layout: Layout; rules: Rules; title: string; revision: number; selected: string | null; onSelect: (id: string | null) => void; onReturn2D: () => void; compact?: boolean; selectable: boolean };
+type Props = { room: Room; layout: Layout; rules: Rules; title: string; revision: number; selected: string | null; onSelect: (id: string | null) => void; onReturn2D: () => void; onEditRoom?: () => void; compact?: boolean; selectable: boolean };
 type Runtime = { renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.OrthographicCamera; controls: OrbitControls; model: RoomScene | null; highlight: THREE.BoxHelper | null; room: Room; cutaway: boolean; render: () => void; reset: () => void; zoom: (factor: number) => void; select: (id: string | null) => void };
 
 export default function Room3D(props: Props) {
@@ -61,6 +61,7 @@ export default function Room3D(props: Props) {
       let picked:string|null=null,o:THREE.Object3D|null=hit?.object||null;
       while(o&&!o.userData.objectId)o=o.parent;
       if(o&&latest.current.layout.furniture.some(f=>f.id===o!.userData.objectId))picked=o.userData.objectId;
+      else if(o&&latest.current.room.fixtures.some(f=>f.id===o!.userData.objectId)&&latest.current.onEditRoom){latest.current.onEditRoom();return;}
       latest.current.onSelect(picked);
     };
     const contextLost=(event:Event)=>{event.preventDefault();queueMicrotask(()=>setError('The 3D graphics connection was lost. Switch to 2D to continue; your room is preserved.'));};
@@ -76,6 +77,7 @@ export default function Room3D(props: Props) {
   useEffect(()=>{runtime.current?.select(props.selected);},[props.selected]);
   useEffect(()=>{if(runtime.current){runtime.current.cutaway=cutaway;runtime.current.render();}},[cutaway]);
   const unknown=props.layout.furniture.filter(f=>f.sizeCm.h===null);
+  const concepts=props.room.fixtures.some(f=>['basin','toilet','shower','bath','towel_rail'].includes(f.kind));
   return <section className={`ft-3d ${props.compact?'ft-3d-compact':''}`} aria-label={`${props.title} 3D view`}>
     <div className="ft-3d-caption"><div><strong>{props.title}</strong><span>3D · rev. {props.revision}</span></div><span>{props.room.widthCm/100} × {props.room.depthCm/100} m · {props.rules.ceilingCm/100} m high</span></div>
     <div className="ft-3d-stage"><div className="ft-3d-canvas" ref={host}/>{error&&<div className="ft-3d-fallback" role="alert"><strong>Keep planning in 2D</strong><p>{error}</p><button className="ft-button ft-primary" onClick={props.onReturn2D}>Back to 2D</button></div>}
@@ -83,6 +85,8 @@ export default function Room3D(props: Props) {
       {!error&&<div className="ft-3d-camera" role="group" aria-label={`${props.title} camera controls`}><button onClick={()=>runtime.current?.zoom(1.2)} aria-label={`Zoom in ${props.title} 3D`}>+</button><button onClick={()=>runtime.current?.zoom(1/1.2)} aria-label={`Zoom out ${props.title} 3D`}>−</button><button onClick={()=>runtime.current?.reset()}>Reset camera</button><button aria-pressed={cutaway} onClick={()=>setCutaway(!cutaway)}>Cutaway {cutaway?'on':'off'}</button></div>}
     </div>
     <div className="ft-3d-footer"><span>Drag to orbit · scroll or pinch to zoom</span>{props.selectable&&<label>Select piece <select aria-label={`Select piece in ${props.title} 3D`} value={props.selected||''} onChange={e=>props.onSelect(e.target.value||null)}><option value="">Choose furniture</option>{props.layout.furniture.map(f=><option key={f.id} value={f.id}>{f.label}{f.locked.position?' · pinned':''}</option>)}</select></label>}</div>
+    {props.onEditRoom&&props.room.fixtures.length>0&&<button className="ft-text-button" onClick={props.onEditRoom}>Edit fixed fixtures ↗</button>}
+    {concepts&&<p className="ft-3d-note">Bathroom concept only · fixed equipment and assumed access zones. No plumbing, installation or safety compliance assessment. Shower tray shown without an unmeasured enclosure.</p>}
     {unknown.length>0&&<p className="ft-3d-note">Height unknown: {unknown.map(f=>f.label).join(', ')}. Dashed boxes use a 1 m visual placeholder, not a measured height.</p>}
     <p className="ft-3d-note">Same room, same rules. Door height is illustrative; TV visibility is still the 2D height-strip check.</p>
   </section>;

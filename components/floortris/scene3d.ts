@@ -69,6 +69,19 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     legs(h * .46);
     box(g, [w, h * .17, d * .91], [0, h * .49, d * .04], body, .055);
     box(g, [w, h * .46, d * .18], [0, h * .77, -d * .41], body, .055);
+  } else if (item.kind === 'bed') {
+    // The measured envelope includes the headboard, not just the mattress.
+    legs(h * .16, Math.min(.035, w * .035));
+    box(g, [w, h * .24, d], [0, h * .22, 0], wood, .035);
+    box(g, [w, h, d * .065], [0, h / 2, -d * .4675], body, .04);
+    box(g, [w * .91, h * .22, d * .91], [0, h * .45, d * .017], cream, .05);
+    box(g, [w * .94, h * .075, d * .62], [0, h * .595, d * .16], body, .045);
+    box(g, [w * .94, h * .025, d * .15], [0, h * .645, d * .36], material('#d8c5a7'), .015);
+    const pillows = w < 1.15 ? 1 : 2;
+    for (let i = 0; i < pillows; i++) {
+      const x = pillows === 1 ? 0 : (i === 0 ? -1 : 1) * w * .235;
+      box(g, [w * (pillows === 1 ? .68 : .40), h * .12, d * .20], [x, h * .625, -d * .30], cream, .045);
+    }
   } else if (item.kind === 'desk' || item.kind === 'table' || item.kind === 'coffee_table') {
     const top = Math.min(.07, h * .12); legs(h - top, item.kind === 'coffee_table' ? .035 : .025);
     box(g, [w, top, d], [0, h - top / 2, 0], body, item.kind === 'coffee_table' ? .10 : .025);
@@ -95,6 +108,50 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     box(g, [horizontal ? w : w * .75, h, horizontal ? d * .75 : d], [0, h / 2, 0], cream, .01);
     const length = horizontal ? w : d;
     for (let t = -length / 2 + .035; t < length / 2; t += .07) box(g, horizontal ? [.035, h * .91, d] : [w, h * .91, .035], horizontal ? [t, h * .51, 0] : [0, h * .51, t], body, .01);
+  } else if (String(item.kind) === 'basin') {
+    const ceramic = material('#f2f1e9'), recess = material('#bacdcd'), chrome = material('#8faaa8');
+    if (w >= .75) box(g, [w * .93, h * .69, d * .9], [0, h * .345, 0], body, .025);
+    else cylinder(g, Math.min(w,d) * .19, Math.min(w,d) * .24, h * .68, [0,h * .34,0], ceramic);
+    box(g, [w, h * .09, d], [0,h * .745,0], ceramic, .04);
+    box(g, [w * .71, h * .012, d * .57], [0,h * .799,d * .045], recess, .035);
+    for (const x of [-1,1]) box(g, [w * .11,h * .12,d * .87], [x * w * .445,h * .84,0], ceramic, .025);
+    for (const z of [-1,1]) box(g, [w * .81,h * .12,d * .12], [0,h * .84,z * d * .435], ceramic, .025);
+    cylinder(g, Math.min(w,d) * .025, Math.min(w,d) * .025, h * .12, [0,h * .90,-d * .34], chrome);
+    box(g, [w * .045,h * .025,d * .18], [0,h * .948,-d * .26], chrome, .004);
+  } else if (String(item.kind) === 'toilet') {
+    const ceramic = material('#f4f3ec'), water = material('#abc2c2');
+    box(g, [w * .80,h * .47,d * .24], [0,h * .765,-d * .36], ceramic, .035);
+    box(g, [w * .82,h * .025,d * .25], [0,h * .9875,-d * .36], cream, .012);
+    const pedestal = cylinder(g, 1, .72, h * .38, [0,h * .19,d * .12], ceramic);
+    pedestal.scale.set(w * .33,1,d * .25);
+    const bowl = cylinder(g, 1, .76, h * .18, [0,h * .44,d * .12], ceramic);
+    bowl.scale.set(w * .48,1,d * .34);
+    const seat = cylinder(g, 1, 1, h * .035, [0,h * .548,d * .12], cream);
+    seat.scale.set(w * .46,1,d * .32);
+    const opening = cylinder(g, 1, 1, h * .005, [0,h * .568,d * .13], water);
+    opening.scale.set(w * .31,1,d * .22);
+    box(g, [w * .15,h * .009,d * .045], [w * .2,h * .989,-d * .23], dark, .003);
+  } else if (String(item.kind) === 'shower') {
+    // Tray-only measurements: no unmeasured glass or overhead shower hardware.
+    const ceramic = material('#edece4'), recess = material('#c1d0cc');
+    box(g, [w,h * .78,d], [0,h * .39,0], ceramic, .018);
+    box(g, [w * .88,h * .02,d * .88], [0,h * .80,0], recess, .012);
+    for (const x of [-1,1]) box(g, [w * .04,h * .2,d], [x * w * .48,h * .90,0], ceramic, .008);
+    for (const z of [-1,1]) box(g, [w,h * .2,d * .04], [0,h * .90,z * d * .48], ceramic, .008);
+    cylinder(g, Math.min(w,d) * .045, Math.min(w,d) * .045, h * .02, [w * .27,h * .83,-d * .27], dark);
+  } else if (String(item.kind) === 'bath') {
+    const ceramic = material('#efeee6'), inset = material('#c3d3d0'), chrome = material('#90a4a1');
+    box(g, [w,h * .18,d], [0,h * .09,0], ceramic, .045);
+    for (const z of [-1,1]) box(g, [w,h * .82,d * .1], [0,h * .59,z * d * .45], ceramic, .035);
+    for (const x of [-1,1]) box(g, [w * .06,h * .82,d * .83], [x * w * .47,h * .59,0], ceramic, .035);
+    box(g, [w * .87,h * .015,d * .78], [0,h * .27,0], inset, .04);
+    cylinder(g, Math.min(w,d) * .023, Math.min(w,d) * .023, h * .10, [-w * .45,h * .88,0], chrome);
+    box(g, [w * .075,h * .025,d * .045], [-w * .42,h * .927,0], chrome, .004);
+  } else if (String(item.kind) === 'towel_rail') {
+    const metal = material('#7b9590');
+    for (const x of [-1,1]) cylinder(g, Math.min(w,d) * .11, Math.min(w,d) * .11, h * .97, [x * w * .43,h * .5,0], metal);
+    for (let i=0;i<8;i++) box(g, [w * .86,h * .018,d * .28], [0,h * (.12+i*.105),0], metal, .006);
+    box(g, [w * .57,h * .36,d * .10], [w * .05,h * .59,d * .28], body, .01);
   } else if (item.kind === 'plant') {
     const potH = h * .29; cylinder(g, Math.min(w,d) * .37, Math.min(w,d) * .27, potH, [0,potH / 2,0], material('#c39179'));
     cylinder(g,.012,.014,h * .65,[0,h * .60,0],wood);

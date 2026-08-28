@@ -8,6 +8,16 @@ import { roomEditStamp, validateRoomInputs } from './room-inputs.ts';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema-validated JSON dispatch boundary; authoritative domain records remain strongly typed.
 type Args = Record<string, any>;
 export type HumanPatch = Partial<Pick<Furniture, 'originCell' | 'rotation' | 'variantId' | 'targetSofaId' | 'linkedDeskId' | 'wallAnchor' | 'elevationCm' | 'appearance'>>;
+/** V1 data is retained byte-for-byte in layout terms; V2 only adds room intent. */
+export function migrateState(input: AppState): AppState {
+  const next = clone(input);
+  if (next.version === 1 || !next.room.profile) {
+    next.version = 2;
+    next.room.profile = { kind: 'lounge' };
+    if (next.proposal && !next.proposal.room.profile) next.proposal.room.profile = { kind: 'lounge' };
+  }
+  return next;
+}
 export const proposalStatus = (s: AppState, p: Proposal | null = s.proposal) => {
   if (!p) return 'none';
   if (p.baseCurrentRevision !== s.currentRevision || p.baseRuleRevision !== s.ruleRevision) return 'stale';
@@ -25,7 +35,7 @@ function checkRules(r: Rules) {
 }
 function sanitizedPatch(a: Args): HumanPatch { const p: Args = {}; for (const k of ['originCell', 'rotation', 'variantId', 'targetSofaId', 'linkedDeskId', 'wallAnchor', 'elevationCm']) if (a[k] !== undefined) p[k] = clone(a[k]); return p; }
 export function createStore(initialState: AppState = makeDemo()) {
-  let state = frozen(clone(initialState));
+  let state = frozen(migrateState(initialState));
   const listeners = new Set<() => void>(), candidates = new Map<string, Candidate>(), retries = new Map<string, { signature: string; result: CommandResult }>();
   const candidateReports = new Map<string, Report>();
   let candidateSeq = 0;
@@ -64,7 +74,7 @@ export function createStore(initialState: AppState = makeDemo()) {
   const envelope = (p: Proposal, extra: Args = {}): CommandResult => {
     const r = validate(p.layout, p.room, p.rules, state.inventory);
     const issues = r.issues.slice(0, 16).map(issue => ({ ...issue, cells: issue.cells.slice(0, 40), cellCount: issue.cells.length, ...(issue.objectIds.some(id => p.layout.furniture.some(o => o.id === id)) ? { suggestedNextTool: 'findPlacements', suggestedArgs: { proposalId: p.id, revision: p.revision, objectId: issue.objectIds.find(id => p.layout.furniture.some(o => o.id === id)) } } : {}) }));
-    return { operationSucceeded: true, proposalId: p.id, revision: p.revision, status: proposalStatus(state, p), baseCurrentRevision: p.baseCurrentRevision, baseRuleRevision: p.baseRuleRevision, validation: r.validation, brief: r.brief, issues, issueCount: r.issues.length, hasMoreIssues: r.issues.length > issues.length, flagsSummary: r.flagsSummary, omitted: p.omitted, ...extra };
+    return { operationSucceeded: true, proposalId: p.id, revision: p.revision, status: proposalStatus(state, p), profile: p.room.profile || { kind: 'lounge' }, conceptualOnly: r.conceptualOnly || false, baseCurrentRevision: p.baseCurrentRevision, baseRuleRevision: p.baseRuleRevision, validation: r.validation, brief: r.brief, issues, issueCount: r.issues.length, hasMoreIssues: r.issues.length > issues.length, flagsSummary: r.flagsSummary, omitted: p.omitted, ...extra };
   };
   const commit = (p: Proposal, extra: Args = {}) => { p.revision++; const next = clone(state); next.proposal = p; publish(next); return envelope(p, extra); };
   const authoritative = (object: Furniture) => object.ownership === 'owned' ? state.inventory.find(o => o.id === object.id) || fail('unknown_owned_instance', 'Owned piece has no authoritative measured inventory record.') : object;
@@ -82,8 +92,17 @@ export function createStore(initialState: AppState = makeDemo()) {
     if (patch.linkedDeskId !== undefined && (object.kind !== 'chair' || !layout.furniture.some(o => o.id === patch.linkedDeskId && o.kind === 'desk'))) fail('invalid_id', 'A linked desk must exist, and only a chair can link to it.');
     if ((patch.wallAnchor || patch.elevationCm !== undefined) && object.kind !== 'tv') fail('invalid_property', 'Wall anchors and elevation are editable only for wall TVs in V1.');
     let next = { ...clone(object), ...clone(patch) };
-    if (patch.variantId) { const v = CATALOGUE.find(v => v.id === patch.variantId) || fail('variant_unavailable', 'Choose an available named size variant.'); if (v.kind !== object.kind) fail('variant_unavailable', 'A variant must keep the same furniture kind.'); next = { ...next, sizeCm: clone(v.sizeCm), label: v.name }; }
-    if (object.ownership === 'owned') { next.sizeCm = clone(source.sizeCm); next.requiredInRoom = source.requiredInRoom; next.locked = clone(source.locked); }
+    if (patch.variantId) {
+      const v = CATALOGUE.find(v => v.id === patch.variantId) || fail('variant_unavailable', 'Choose an available named size variant.');
+      if (v.kind !== object.kind) fail('variant_unavailable', 'A variant must keep the same furniture kind.');
+      const tags = [...(v.tags || (v.kind === 'sofa' ? ['seating'] : v.kind === 'chair' ? ['work-seating'] : []))];
+      const sleepSize = v.kind === 'bed' ? (tags.find(tag => tag === 'single' || tag === 'double' || tag === 'king') as Furniture['sleepSize']) : undefined;
+      // A new catalogue variant is a new role as well as new dimensions. In
+      // particular, replacing a wardrobe with a bedside table must not retain
+      // the wardrobe tags and satisfy the bedroom brief by accident.
+      next = { ...next, sizeCm: clone(v.sizeCm), label: v.name, tags, sleepSize };
+    }
+    if (object.ownership === 'owned') { next.sizeCm = clone(source.sizeCm); next.requiredInRoom = source.requiredInRoom; next.locked = clone(source.locked); next.tags = clone(source.tags); next.sleepSize = source.sleepSize; }
     return next;
   };
   const removeFrom = (layout: Layout, id: string, omitted: Proposal['omitted']) => {
@@ -139,7 +158,7 @@ export function createStore(initialState: AppState = makeDemo()) {
       try { placed = checkPatch(piece, patch, p.layout); } catch { continue; }
       const testLayout = clone(p.layout); testLayout.furniture = [...testLayout.furniture.filter(o => o.id !== placed.id), placed];
       const report = validate(testLayout, p.room, p.rules, state.inventory);
-      const relevant = report.issues.filter(i => i.severity === 'block' && (i.objectIds.includes(placed.id) || !baseBlocks.has(issueSignature(i))));
+      const relevant = report.issues.filter(i => i.severity === 'block' && i.code !== 'desk_chair_missing' && (i.objectIds.includes(placed.id) || !baseBlocks.has(issueSignature(i))));
       const avoid = a.avoidFlags || []; const occupiedKeys = new Set(rectCells(bounds(placed)).map(c => `${c.x},${c.y}`));
       const violatesAvoid = placed.kind !== 'tv' && report.cells.some(c => occupiedKeys.has(`${c.x},${c.y}`) && c.flags.some(f => avoid.includes(f)));
       if (!relevant.length && !violatesAvoid) { const candidateId = `candidate-${++candidateSeq}`; candidateReports.set(candidateId, report); found.push({ candidateId, proposalId: p.id, proposalRevision: p.revision, ruleRevision: state.ruleRevision, objectId: existing?.id, variantId: placed.variantId, originCell: placed.originCell, rotation: placed.rotation, wallAnchor: placed.wallAnchor, checkedRules: ['physical_fit', 'solid_overlap', 'doors', 'windows', 'radiator', 'use_zones', 'orthogonal_hard_path', 'preferred_path', 'full_tv_strip', 'ceiling', 'owned_locks', 'required_brief'], placementStatus: 'valid', layoutStatus: report.validation.status, remainingIssues: report.issues.slice(0, 10).map(i => ({ ...i, cells: i.cells.slice(0, 20), cellCount: i.cells.length, hasMoreCells: i.cells.length > 20 })), remainingIssueCount: report.issues.length, hasMoreRemainingIssues: report.issues.length > 10, details: { tool: 'checkLayout', args: { which: 'proposal', revision:p.revision, candidateId, detail:'issues', offset:0, limit:100 } }, brief: report.brief }); }
@@ -161,12 +180,12 @@ export function createStore(initialState: AppState = makeDemo()) {
       if (retryKey && retries.has(retryKey)) { const prior = retries.get(retryKey)!; if (prior.signature !== signature) fail('idempotency_conflict', 'This idempotency key was already used with different arguments.'); return clone({ ...prior.result, idempotentReplay: true, activeProposalRevision: state.proposal?.revision }); }
       let result: CommandResult;
       if (name === 'listCatalogue') {
-        const list = CATALOGUE.filter(v => !a.kind || v.kind === a.kind), offset = a.offset || 0, limit = a.limit || 30;
+        const list = CATALOGUE.filter(v => (!a.kind || v.kind === a.kind) && (!a.profile || !v.recommendedProfiles || v.recommendedProfiles.includes(a.profile)) && (!a.tag || v.tags?.includes(a.tag))), offset = a.offset || 0, limit = a.limit || 30;
         return { operationSucceeded: true, catalogue: clone(list.slice(offset, offset + limit)), total: list.length, offset, hasMore: offset + limit < list.length, palettes: clone(PALETTES) };
       }
       if (['getRoomState', 'listFurniture', 'checkLayout'].includes(name)) {
-        const snap = snapshot(a); let report = validate(snap.layout, snap.room, snap.rules, state.inventory); if (a.candidateId) { const c = candidates.get(a.candidateId) || fail('revision_conflict','Candidate is stale or unavailable.'); if (a.which !== 'proposal' || c.proposalRevision !== snap.revision || c.ruleRevision !== state.ruleRevision) fail('revision_conflict','Candidate revision differs from the inspected draft.'); report = candidateReports.get(a.candidateId) || fail('revision_conflict','Candidate detail is no longer available.'); } const common = { operationSucceeded: true, which: snap.which, revision: snap.revision, currentRevision: state.currentRevision, ruleRevision: state.ruleRevision, proposalId: state.proposal?.id, status: proposalStatus(state) };
-        if (name === 'getRoomState') return clone({ ...common, room: snap.room, rules: snap.rules, coordinates: { origin: 'top-left', x: 'east', y: 'south', cellCm: 20, geometryUnit: 'cm' }, validation: report.validation, brief: report.brief, clearances: report.clearances, flagsSummary: report.flagsSummary, proposalKind: state.proposal?.kind, assumptions: 'Product assumptions, not building regulations or accessibility certification. TV is a height strip check, not optical visibility.' });
+        const snap = snapshot(a); let report = validate(snap.layout, snap.room, snap.rules, state.inventory); if (a.candidateId) { const c = candidates.get(a.candidateId) || fail('revision_conflict','Candidate is stale or unavailable.'); if (a.which !== 'proposal' || c.proposalRevision !== snap.revision || c.ruleRevision !== state.ruleRevision) fail('revision_conflict','Candidate revision differs from the inspected draft.'); report = candidateReports.get(a.candidateId) || fail('revision_conflict','Candidate detail is no longer available.'); } const common = { operationSucceeded: true, which: snap.which, revision: snap.revision, currentRevision: state.currentRevision, ruleRevision: state.ruleRevision, proposalId: state.proposal?.id, status: proposalStatus(state), profile: snap.room.profile || { kind: 'lounge' }, conceptualOnly: report.conceptualOnly || false };
+        if (name === 'getRoomState') return clone({ ...common, room: snap.room, profile: snap.room.profile || { kind: 'lounge' }, profileRequirements: report.brief.requirements || [], conceptualOnly: report.conceptualOnly || false, rules: snap.rules, coordinates: { origin: 'top-left', x: 'east', y: 'south', cellCm: 20, geometryUnit: 'cm' }, validation: report.validation, brief: report.brief, clearances: report.clearances, flagsSummary: report.flagsSummary, proposalKind: state.proposal?.kind, assumptions: 'Product assumptions only; bathroom concepts do not validate installation, regulations or safety.' });
         if (name === 'listFurniture') { const list = [...snap.room.fixtures, ...snap.layout.furniture], offset = a.offset || 0, limit = a.limit || 30; return clone({ ...common, furniture: list.slice(offset, offset + limit), total: list.length, offset, hasMore: offset + limit < list.length, ownedInventory: state.inventory }); }
         const inRegion = (c: { x: number; y: number }) => !a.region || (c.x >= a.region.x && c.y >= a.region.y && c.x < a.region.x + a.region.w && c.y < a.region.y + a.region.d);
         const entries = a.detail === 'flags' ? report.cells.filter(c => inRegion(c) && (!a.objectId || c.objectIds.includes(a.objectId)) && (!a.ruleCode || c.flags.includes(a.ruleCode))) : report.issues.filter(i => (!a.ruleCode || i.code === a.ruleCode) && (!a.objectId || i.objectIds.includes(a.objectId)) && (!a.region || i.cells.some(inRegion))).map(i => ({ ...i, cells: i.cells.slice(0, 60), cellCount: i.cells.length }));
@@ -201,10 +220,19 @@ export function createStore(initialState: AppState = makeDemo()) {
           object = checkPatch(object, candidatePatch || sanitizedPatch(a), p.layout); p.layout.furniture.push(object);
           p.omitted = p.omitted.filter(o => o.objectId !== object.id);
         } else if (name === 'proposeLayout') {
-          const requested: string[] = a.variantIds || ['frame-tv-120', 'line-desk-100', 'pebble-table-80', 'weave-rug-200'];
+          const profile = p.room.profile || { kind: 'lounge' as const };
+          const defaults = profile.kind === 'bedroom' ? [`haven-${profile.sleeping}-${profile.sleeping === 'single' ? '100' : profile.sleeping === 'double' ? '140' : '160'}`, ...(profile.storage ? ['tallline-wardrobe-100'] : []), ...(profile.workspace ? ['line-desk-100', 'nest-chair-60'] : []), ...Array.from({ length: Math.max(0, Math.min(2, profile.bedsideQuantity || 0)) }, () => 'nook-bedside-40')]
+            : profile.kind === 'home_office' ? ['line-desk-100', 'nest-chair-60', ...(profile.seating ? ['nest-chair-60'] : []), ...(profile.storage ? ['archive-tall-80'] : [])]
+              : profile.kind === 'bathroom_concept' ? ['weave-mat-80'] : ['frame-tv-120', 'line-desk-100', 'pebble-table-80', 'weave-rug-200'];
+          const requested: string[] = a.variantIds || defaults;
           requested.forEach(id => { if (!CATALOGUE.some(v => v.id === id)) fail('variant_unavailable', `Unknown catalogue variant: ${id}.`); });
-          const priority: Record<string, number> = { sofa: 1, tv: 2, desk: 3, storage: 4, coffee_table: 5, table: 5, chair: 6, plant: 7, rug: 8 };
-          const wanted = [...requested];
+          (a.quantities || []).forEach((q: { variantId: string }) => { if (!CATALOGUE.some(v => v.id === q.variantId)) fail('variant_unavailable', `Unknown catalogue variant: ${q.variantId}.`); });
+          const priority: Record<string, number> = { sofa: 1, tv: 2, bed: 2, desk: 3, chair: 4, storage: 5, coffee_table: 6, table: 6, plant: 7, rug: 8 };
+          // Explicit quantities are targets for their variants, not additions
+          // to defaults or repeated retries. This keeps a request for two
+          // nightstands at two even when the bedroom profile has that default.
+          const quantityVariants = new Set((a.quantities || []).map((q: { variantId: string }) => q.variantId));
+          const wanted = [...requested.filter(id => !quantityVariants.has(id)), ...(a.quantities || []).flatMap((q: { variantId: string; quantity: number }) => Array.from({ length: q.quantity }, () => q.variantId))];
           for (const kind of p.rules.requiredKinds) if (!p.layout.furniture.some(o => o.kind === kind) && !wanted.some(id => CATALOGUE.find(v => v.id === id)?.kind === kind)) { const variant = CATALOGUE.find(v => v.kind === kind); if (variant) wanted.push(variant.id); }
           wanted.sort((a, b) => (priority[CATALOGUE.find(v => v.id === a)!.kind] || 9) - (priority[CATALOGUE.find(v => v.id === b)!.kind] || 9));
           let trials = 0; const start = Date.now();
@@ -214,11 +242,41 @@ export function createStore(initialState: AppState = makeDemo()) {
             const found = await search(p, { objectId: object.id, limit: 1 }, signal, 900); trials += found.trials;
             if (found.found[0]) { const c = found.found[0]; const patch = { originCell: c.originCell, rotation: c.rotation, ...(c.wallAnchor ? { wallAnchor: c.wallAnchor } : {}) }; p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? checkPatch(o, patch, p.layout) : o); }
           }
-          for (const variantId of [...new Set(wanted)]) {
-            const v = CATALOGUE.find(v => v.id === variantId)!; if (p.layout.furniture.some(o => o.kind === v.kind)) continue;
+          for (const [requestIndex, variantId] of wanted.entries()) {
+            const v = CATALOGUE.find(v => v.id === variantId)!;
+            // A brief item is an instance, not a kind: two bedside tables and two
+            // storage pieces remain distinct. Only singular non-storage defaults
+            // are skipped when already present.
+            const requestedQuantity = wanted.slice(0, requestIndex + 1).filter(id => id === variantId).length;
+            const singletonProfileDefault = !a.variantIds && !quantityVariants.has(variantId) && defaults.filter(id => id === variantId).length === 1;
+            const semanticDefaultPresent = singletonProfileDefault && (
+              profile.kind === 'bedroom' && v.kind === 'bed' && p.layout.furniture.some(o => o.kind === 'bed' && (o.sleepSize === profile.sleeping || o.tags.includes(profile.sleeping))) ||
+              profile.kind === 'bedroom' && v.kind === 'storage' && v.tags?.includes('wardrobe') && p.layout.furniture.some(o => o.kind === 'storage' && (o.tags.includes('wardrobe') || o.tags.includes('clothes-storage')))
+            );
+            const existingQuantity = Math.max(p.layout.furniture.filter(o => o.variantId === variantId).length, semanticDefaultPresent ? 1 : 0);
+            if (existingQuantity >= requestedQuantity) continue;
+            if (p.layout.furniture.length >= 30) { p.omitted.push({ variantId, reason: `Instance ${requestedQuantity} omitted: the room limit is 30 movable pieces.` }); continue; }
+            const linkedChairVariant = v.kind === 'desk' ? wanted.slice(requestIndex + 1).find(id => CATALOGUE.find(candidate => candidate.id === id)?.kind === 'chair') : undefined;
+            if (p.layout.furniture.length + (linkedChairVariant ? 2 : 1) > 30) { p.omitted.push({ variantId, reason: `Instance ${requestedQuantity} omitted: preserving a linked desk-chair pair would exceed the 30-piece room limit.` }); continue; }
+            const needsWorkstation = profile.kind === 'home_office' || (profile.kind === 'bedroom' && profile.workspace);
+            if (v.kind === 'chair' && needsWorkstation && !p.layout.furniture.some(desk => desk.kind === 'desk')) { p.omitted.push({ variantId, reason: `Instance ${requestedQuantity} omitted: no desk remains for this work chair.` }); continue; }
             if (signal?.aborted) fail('cancelled', 'Planning cancelled without committing.');
             const found = Date.now() - start > 6500 ? { found: [] as Candidate[], trials: 0 } : await search(p, { variantId, limit: 1 }, signal, 1100); trials += found.trials;
-            if (found.found[0]) { const c = found.found[0], object = fromVariant(variantId, `planned-${v.kind}-${p.revision}`); Object.assign(object, { originCell: c.originCell, rotation: c.rotation }); if (c.wallAnchor) object.wallAnchor = c.wallAnchor; if (object.kind === 'tv') object.targetSofaId = p.layout.furniture.find(o => o.kind === 'sofa')?.id; p.layout.furniture.push(object); }
+            if (found.found[0]) {
+              const c = found.found[0], object = fromVariant(variantId, `planned-${p.id}-${p.revision}-${variantId}-${requestIndex + 1}`);
+              Object.assign(object, { originCell: c.originCell, rotation: c.rotation }); if (c.wallAnchor) object.wallAnchor = c.wallAnchor;
+              if (object.kind === 'tv') object.targetSofaId = p.layout.furniture.find(o => o.kind === 'sofa')?.id;
+              if (object.kind === 'chair') { const desk = [...p.layout.furniture].reverse().find(o => o.kind === 'desk' && !p.layout.furniture.some(chair => chair.kind === 'chair' && chair.linkedDeskId === o.id)); if (desk) object.linkedDeskId = desk.id; }
+              p.layout.furniture.push(object);
+              // Office desks are planned as an all-or-nothing work arrangement:
+              // reserve the desk, then test and link its chair before retaining it.
+              if (object.kind === 'desk' && linkedChairVariant && !p.layout.furniture.some(chair => chair.kind === 'chair' && chair.linkedDeskId === object.id)) {
+                const chairVariant = linkedChairVariant;
+                const chair = await search(p, { variantId: chairVariant, limit: 1 }, signal, 900); trials += chair.trials;
+                if (chair.found[0]) { const cc = chair.found[0], linked = fromVariant(chairVariant, `planned-${p.id}-${p.revision}-${chairVariant}-linked-${requestIndex + 1}`); Object.assign(linked, { originCell: cc.originCell, rotation: cc.rotation, linkedDeskId: object.id }); p.layout.furniture.push(linked); }
+                else { p.layout.furniture = p.layout.furniture.filter(o => o.id !== object.id); p.omitted.push({ variantId, reason: 'Desk omitted because no linked chair could be placed in the same bounded work arrangement.' }); }
+              }
+            }
             else { const smaller = CATALOGUE.filter(x => x.kind === v.kind && x.sizeCm.w * x.sizeCm.d < v.sizeCm.w * v.sizeCm.d).sort((a, b) => b.sizeCm.w * b.sizeCm.d - a.sizeCm.w * a.sizeCm.d)[0]; const checkedSmaller = smaller && Date.now() - start <= 6500 ? await search(p,{variantId:smaller.id,limit:1},signal,600) : undefined; trials += checkedSmaller?.trials || 0; p.omitted.push({ variantId, reason: `No placement found in this bounded greedy scan. ${p.rules.requiredKinds.includes(v.kind) ? 'This required function is still missing.' : 'Optional piece omitted.'} Not proof of infeasibility.`, ...(smaller && checkedSmaller?.found[0] ? { alternativeVariantId: smaller.id, alternativeChecked: { trials:checkedSmaller.trials, placementStatus:'valid', layoutStatus:checkedSmaller.found[0].layoutStatus, proposalRevision:p.revision, ruleRevision:state.ruleRevision } } : {}) }); }
           }
           if (signal?.aborted) fail('cancelled', 'Planning cancelled without committing.'); guard(a, 'layout'); result = commit(p, { planner: { kind: 'deterministic_bounded_greedy', trials, elapsedMs: Date.now() - start, complete: validate(p.layout, p.room, p.rules, state.inventory).validation.hardFailures === 0 && validate(p.layout, p.room, p.rules, state.inventory).brief.status === 'satisfied' } });
@@ -287,17 +345,41 @@ export function createStore(initialState: AppState = makeDemo()) {
     next.currentRevision++; publish(next); return { operationSucceeded: true };
   });
   const humanSetRequired = (id: string, required: boolean) => human(() => { const next = clone(state), inventory = next.inventory.find(o => o.id === id) || fail('invalid_id', 'Owned inventory piece not found.'); inventory.requiredInRoom = required; const o = next.current.furniture.find(o => o.id === id); if (o) o.requiredInRoom = required; next.currentRevision++; publish(next); return { operationSucceeded: true }; });
-  const humanAddOwned = (input: { label: string; kind: Furniture['kind']; sizeCm: Furniture['sizeCm'] }) => human(() => {
+  const humanAddOwned = (input: { label: string; kind: Furniture['kind']; sizeCm: Furniture['sizeCm']; sleepSize?: Furniture['sleepSize']; storageRole?: 'wardrobe' | 'bedside' | 'general' }) => human(() => {
     if (!input.label.trim() || input.label.length > 100 || !['sofa','chair','desk','coffee_table','storage','plant','bed','rug','other','table'].includes(input.kind)) fail('invalid_arguments', 'Choose a supported floor furniture type and name.');
     const size = input.sizeCm;
     if (![size.w,size.d].every(n => Number.isFinite(n) && n > 0 && n <= 600) || (size.h !== null && (!Number.isFinite(size.h) || size.h < 0 || size.h > 500))) fail('invalid_measurement', 'Use finite positive dimensions, and a measured height or unknown.');
     const next = clone(state); if (next.current.furniture.length >= 30) fail('room_limit', 'V1 supports 30 pieces.'); next.sequence++;
-    const object: Furniture = { id: `owned-${next.sequence}`, label: input.label.trim(), kind: input.kind, ownership: 'owned', sizeCm: clone(size), originCell: {x:2,y:2}, rotation:0, elevationCm:0, locked:{size:true}, appearance:'oat', requiredInRoom:true, tags: input.kind === 'sofa' ? ['seating'] : [] };
+    if (input.kind === 'bed' && !input.sleepSize) fail('invalid_arguments', 'Classify an owned bed as single, double, or king; its measured frame is preserved.');
+    if (input.sleepSize !== undefined && (input.kind !== 'bed' || !['single', 'double', 'king'].includes(input.sleepSize))) fail('invalid_arguments', 'Sleep size must be single, double, or king and applies only to beds.');
+    if (input.storageRole !== undefined && (input.kind !== 'storage' || !['wardrobe', 'bedside', 'general'].includes(input.storageRole))) fail('invalid_arguments', 'Storage role must be wardrobe, bedside, or general and applies only to storage.');
+    const storageTags = input.storageRole === 'wardrobe' ? ['wardrobe', 'clothes-storage'] : input.storageRole === 'bedside' ? ['bedside'] : [];
+    const object: Furniture = { id: `owned-${next.sequence}`, label: input.label.trim(), kind: input.kind, ownership: 'owned', sizeCm: clone(size), originCell: {x:2,y:2}, rotation:0, elevationCm:0, locked:{size:true}, appearance:'oat', requiredInRoom:true, tags: input.kind === 'sofa' ? ['seating'] : storageTags, ...(input.kind === 'bed' ? { sleepSize: input.sleepSize } : {}) };
     next.inventory.push(clone(object)); next.current.furniture.push(object); next.currentRevision++; publish(next); return { operationSucceeded:true, objectId:object.id };
   });
   const humanMeasureOwned = (id: string, size: Furniture['sizeCm']) => human(() => {
     if (![size.w, size.d].every(n => Number.isFinite(n) && n > 0 && n <= 600) || (size.h !== null && (!Number.isFinite(size.h) || size.h < 0 || size.h > 500))) fail('invalid_measurement', 'Use finite positive width/depth up to 600 cm, and a height up to 500 cm or unknown.');
     const next = clone(state), inventory = next.inventory.find(o => o.id === id) || fail('invalid_id', 'Owned piece not found.'); inventory.sizeCm = clone(size); const object = next.current.furniture.find(o => o.id === id); if (object) object.sizeCm = clone(size); next.currentRevision++; publish(next); return { operationSucceeded: true };
+  });
+  const humanClassifyOwned = (id: string, classification: { sleepSize?: Furniture['sleepSize']; storageRole?: 'wardrobe' | 'bedside' | 'general' }) => human(() => {
+    if ((classification.sleepSize === undefined && classification.storageRole === undefined) || (classification.sleepSize !== undefined && classification.storageRole !== undefined)) fail('invalid_arguments', 'Classify an owned bed sleep size or an owned storage role.');
+    if (classification.sleepSize !== undefined && !['single', 'double', 'king'].includes(classification.sleepSize)) fail('invalid_arguments', 'Sleep size must be single, double, or king.');
+    if (classification.storageRole !== undefined && !['wardrobe', 'bedside', 'general'].includes(classification.storageRole)) fail('invalid_arguments', 'Storage role must be wardrobe, bedside, or general.');
+    const next = clone(state), inventory = next.inventory.find(o => o.id === id) || fail('invalid_id', 'Owned inventory piece not found.');
+    if (classification.sleepSize !== undefined) {
+      if (inventory.kind !== 'bed') fail('invalid_arguments', 'Only beds have a sleep-size classification.');
+      inventory.sleepSize = classification.sleepSize;
+      inventory.tags = [...inventory.tags.filter(tag => !['single', 'double', 'king'].includes(tag)), classification.sleepSize];
+    } else {
+      if (inventory.kind !== 'storage') fail('invalid_arguments', 'Only storage has a wardrobe, bedside, or general classification.');
+      const role = classification.storageRole!;
+      inventory.tags = inventory.tags.filter(tag => !['wardrobe', 'clothes-storage', 'bedside'].includes(tag));
+      if (role === 'wardrobe') inventory.tags.push('wardrobe', 'clothes-storage');
+      if (role === 'bedside') inventory.tags.push('bedside');
+    }
+    const object = next.current.furniture.find(o => o.id === id);
+    if (object) { object.tags = clone(inventory.tags); object.sleepSize = inventory.sleepSize; }
+    next.currentRevision++; publish(next); return { operationSucceeded: true, currentRevision: state.currentRevision };
   });
   const humanSetRoomFinish = (which: 'current' | 'proposal', target: 'wall' | 'floor', paletteId: string) => human(() => {
     guardHuman(which);
@@ -309,7 +391,7 @@ export function createStore(initialState: AppState = makeDemo()) {
     if (which === 'current') next.currentRevision++; else next.proposal!.revision++;
     publish(next); return which === 'proposal' ? envelope(next.proposal!) : { operationSucceeded: true, currentRevision: state.currentRevision };
   });
-  const applyProposal = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'layout'), report = validate(p.layout, p.room, p.rules, state.inventory); if (report.validation.hardFailures || report.brief.status !== 'satisfied') fail('blocked_apply', 'Resolve hard failures and complete the required lounge brief before Apply.'); const next = clone(state); next.current = clone(p.layout); next.currentRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, currentRevision: state.currentRevision }; });
+  const applyProposal = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'layout'), report = validate(p.layout, p.room, p.rules, state.inventory); if (report.validation.hardFailures || report.brief.status !== 'satisfied') fail('blocked_apply', 'Resolve hard failures and complete the active room brief before Apply.'); const next = clone(state); next.current = clone(p.layout); next.currentRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, currentRevision: state.currentRevision, ...(report.conceptualOnly ? { conceptualOnly: true } : {}) }; });
   const confirmSetup = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'setup'); checkRules(p.rules); const next = clone(state); next.room = clone(p.room); next.rules = clone(p.rules); next.ruleRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, ruleRevision: state.ruleRevision, validation: validate(next.current, next.room, next.rules, next.inventory).validation }; });
   const discardProposal = () => { const next = clone(state); next.proposal = null; publish(next); return { operationSucceeded: true }; };
   const humanStageRoom = (room: Room, rules: Rules, expectedStamp: string, replaceProposal = false) => human(() => {
@@ -324,6 +406,6 @@ export function createStore(initialState: AppState = makeDemo()) {
     return envelope(p, { message: 'Room inputs staged. Review and confirm to update Yours.' });
   });
   const resetDemo = (initial: AppState = makeDemo()) => { publish(restored(initial)); };
-  return { getState, getHistory, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanSetRoomFinish, applyProposal, confirmSetup, discardProposal, resetDemo };
+  return { getState, getHistory, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, applyProposal, confirmSetup, discardProposal, resetDemo };
 }
 export type FloortrisStore = ReturnType<typeof createStore>;

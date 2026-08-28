@@ -1,4 +1,4 @@
-# Floortris V1
+# Floortris
 
 A working room planner people and agents share. The page owns the rule engine; native WebMCP tools edit a visible proposal, and the human controls Apply and room-input confirmation.
 
@@ -28,7 +28,7 @@ but no tools can be discovered. To see the agent side you need one of:
 - **ChatGPT's in-app browser**, or
 - **Google Chrome** with `chrome://flags/#enable-webmcp-testing` set to Enabled, then relaunch.
 
-Once enabled, open the live URL and the tools panel (the `?` button on the board)
+Once enabled, open the live URL and the tools panel (the tools status button above the board)
 reports how many native tools registered. An agent can then call any of the 14.
 
 ### Automated native check
@@ -65,7 +65,7 @@ JSON string. Passing a tool name, a plain object, or `{arguments: ...}` fails wi
 - `components/floortris/FloortrisApp.tsx` and `floortris.css`: board, manual editing, measured-owned entry, catalogue, proposals/comparison, setup review, and exact-revision Apply.
 - `components/floortris/model.ts`, `data.ts`, `engine.ts`: domain model, sample catalogue, and pure shared rules.
 - `components/floortris/schemas.ts`, `store.ts`, `webmcp.ts`: strict tool schemas, authoritative commands, and native registration.
-- Four test files in `components/floortris/`: 45 automated tests, combining the builder's 23 checks and 22 independently written acceptance/contract/adapter checks.
+- Tests in `components/floortris/` cover the shared engine, command authority, native adapter, rendering geometry, room input editing and history. Run `npm test` for the current count.
 
 The initial integrated build passed all 52 tests, TypeScript checking and production compilation. Native discovery of all 14 tools and a native `getRoomState` call were verified in the local in-app browser; a creation attempt correctly refused to overwrite an existing human draft. Unit tests of the registration adapter use a controlled test double and are separate from that real browser evidence. Successful cross-client agent journeys still need target-browser testing.
 
@@ -97,12 +97,15 @@ const planned = await store.execute('proposeLayout', {
 Human-only methods, **not registered tools**:
 
 - `humanUpdate(which, objectId, patch)`; `humanAdd(which, variantId)`; `humanRemove(which, objectId)`
-- `humanAddOwned({label, kind, sizeCm})`: adds a measured, required owned floor piece to Yours.
+- `humanAddOwned({label, kind, sizeCm, sleepSize?, storageRole?})`: adds a measured, required owned floor piece to Yours.
+- `humanClassifyOwned(id, {sleepSize?, storageRole?})`: human-only bed/storage classification without resizing.
 - `humanMeasureOwned(id, sizeCm)`; `humanSetLocks(id, locks)`; `humanSetRequired(id, boolean)`
 - `humanSetRoomFinish(which, 'wall' | 'floor', paletteId)`: the human equivalent of `setAppearance` for room finishes.
 - `applyProposal(proposalId, exactReviewedRevision)`
 - `confirmSetup(proposalId, exactReviewedRevision)`
 - `discardProposal()`; `resetDemo()`
+- `humanStageRoom(room, rules, expectedStamp, replaceProposal?)`: atomic physical-room draft with optimistic concurrency and explicit replacement permission.
+- `undo()`; `redo()`; `getHistory()`: session history with fresh authority tokens on restore.
 
 `which` for human furniture methods is `current | proposal`. A human Current edit increments C; a human Proposal edit increments P. Ownership dimensions remain authoritative even if removal/position locks are explicitly cleared. Only the human may change a measured owned record, its requirement or locks. An owned item's size lock also protects removal, per the spec; the UI provides an explicit unlock-all action for an optional owned piece.
 
@@ -129,7 +132,7 @@ Any document mutation invalidates the candidate cache. Applying a candidate chec
 
 ### Bounded search
 
-Candidate search checks at most 160 trial placements / 1800 ms and returns at most 8 candidates. It yields to the event loop every eight trials and honours aborts. The greedy planner prioritizes required lounge functions and uses a roughly 6500 ms overall placement budget, with a final trial allowed to finish; it commits only after checking the original proposal revision again. Cancellation or human edits during search prevent the result from committing.
+Candidate search checks at most 160 trial placements / 1800 ms and returns at most 8 candidates. It yields to the event loop every eight trials and honours aborts. The greedy planner prioritizes the selected room profile and required owned pieces and uses a roughly 6500 ms overall placement budget, with a final trial allowed to finish; it commits only after checking the original proposal revision again. Cancellation or human edits during search prevent the result from committing.
 
 The provided demo takes **four checked placements**: wall TV, compact desk, low table and rug. It meets the required brief and has zero hard failures or warnings. The planner does not deliberately produce a bad first proposal. Optional omissions are explicit; a smaller alternative is listed only after a real checked search and includes its checking basis. Search failure is not proof of infeasibility.
 
@@ -154,13 +157,13 @@ The provided demo takes **four checked placements**: wall TV, compact desk, low 
 - Desk chair-pull reservations exempt the linked chair from the unrelated-obstruction rule. Its solid still blocks walking. This V1 conservatively requires a free hard-width approach at the **outer edge** of the pull zone, not in the chair itself; this can use more space than a richer ergonomic model.
 - A sofa front is a candidate target band, not a whole-band coffee-table ban. A table may occupy part while a reachable hard footprint remains.
 - Window height checks are limited to a configured front band and sill-to-head interval. Unknown types warn that opening behavior is unverified. Side hinges use a **conservative full-depth rectangle**, not an exact dynamic sash model. Fixed and sash windows have no invented inward envelope.
-- Fixed radiator projection and its 20 cm front assumption are separate masks. **The primary fixture radiator is not editable through this V1 UI or setup tools**. Changing to a smaller room may expose its out-of-room conflict; the UI discloses this fixed demo feature. A general fixed-equipment editor is a remaining product limitation.
+- Fixed radiator projection and its 20 cm front assumption are separate masks. The human Room Editor can add, remove, measure and pin radiators, doors and windows. Changes are staged and require confirmation. Agent furniture commands cannot edit fixed fixtures; accepted opening pins cannot be overridden by agent setup commands.
 - Rectangular rooms only, up to 1000 × 1000 cm, 12 openings and 30 movable pieces. 20 cm cells are fixed. Quarter turns only. No chimney/cutout editor, multi-room layout, stairs or diagonal paths.
 - Storage uses a front rectangle, not a modelled articulated door. Bed long-side clearance is a secondary simple check; it cannot bypass the hard walking footprint.
 - Furniture appearance is editable in the human inspector. Wall and floor finishes are editable there too, in the room panel shown when no piece is selected, through the same palette IDs `setAppearance` accepts. Appearance never changes geometry, height classes or rule flags, but it does advance the revision a reviewer must have seen before Apply.
-- A stale draft must be discarded and recreated. There is no automatic rebase. Only one active setup/layout draft is supported at once. There is no undo history.
+- A stale draft must be discarded and recreated. There is no automatic rebase. Only one active setup/layout draft is supported at once. Undo/redo holds up to 50 complete document states for the current session. Restoring content advances authority revisions and issues fresh proposal IDs, so old agent commands and Apply buttons do not regain validity.
 - Native calls have no backend, no secrets, no external APIs or real purchasing. The UI's local planner is deterministic page code and is labelled that way, never an external agent conversation.
-- Room data is saved transparently in `localStorage` under `floortris.v1.local`. Export downloads JSON. There is no import UI or cloud synchronization. Creation/placement idempotency cache is session-local and bounded to 100 requests; it does not survive page reload.
+- Room data is saved in `localStorage`; the original lounge retains `floortris.v1.local` and the 3 m lounge retains `floortris.v1.sample.3m`. Every additional preset has an independent `floortris.v2.sample.*` key. Both V1 and V2 documents reload without resetting; migration adds a missing lounge profile without rewriting furniture or revisions. Export downloads JSON. There is no import UI or cloud synchronization. Creation/placement idempotency cache is session-local and bounded to 100 requests; it does not survive page reload.
 
 These are product planning assumptions, not accessibility certification, building/fire regulation advice, radiator safety guidance, sunlight analysis or a surveyed real room.
 
@@ -189,9 +192,7 @@ Position fields are under the collapsed **Exact** section.
 - Compare shows two boards side by side, with horizontal scrolling on small screens.
 
 These changes retain the engine and the 14-tool schema. The optional native-result
-observer cannot change a command result if a UI notification fails. Room data
-continues to use the original local-storage format. No import, undo or general
-fixed-fixture editor was added in this UI pass.
+observer cannot change a command result if a UI notification fails. Room documents now use version 2; both original lounge storage keys and all measured content remain compatible. The later room-editor release added staged fixed-feature editing and session undo/redo. There is still no import UI or cloud room synchronization.
 
 ## 3D architectural view
 
@@ -212,3 +213,39 @@ capped at the ceiling), null furniture heights use disclosed translucent 1 m
 placeholders, window movement and real optical sightlines are not simulated.
 No renderer mesh participates in validation. The existing TV height-strip and
 walking assumptions stay unchanged, and comfort warnings remain visible.
+
+
+## Bedrooms, home office and bathroom concepts
+
+The **Rooms** picker switches independently saved documents. New sample furniture starts in a visible proposal; Yours is unchanged until the human presses Apply. Room purpose can also be changed in **Room → Room inputs & fixed fixtures**, staged with the other physical inputs and explicitly confirmed.
+
+| Sample | Query | Starting arrangement |
+| --- | --- | --- |
+| Single bedroom | `?sample=bedroom-single` | 3 × 3 m, measured single-bed proposal |
+| Double bedroom | `?sample=bedroom-double` | Double bed, twin bedside tables, clothes wardrobe |
+| Home office | `?sample=office` | Linked desk/chair arrangement, storage |
+| Bathroom concept | `?sample=bathroom` | Fixed basin, WC and shower tray; movable decor proposal |
+
+Named bed frames are 100 × 200 × 95, 140 × 200 × 100 and 160 × 220 × 105 cm. Mattress dimensions are descriptive only. Side tables, wardrobes, a bench, tall office storage and a small mat extend the catalogue. Profile filters adapt the dock and Pieces panel. Owned beds and storage have human-controlled sleep-size/role classifications; agents cannot change them.
+
+### Access and room briefs
+
+- Bedrooms need the selected sleep size; clothing storage requires a wardrobe role, not just any storage object. A workspace needs a desk and linked chair. Requested bedside quantities are separate optional items.
+- Bed side entry follows the head direction at every rotation. It reserves the configured depth (40 cm default), excludes at most 60 cm at the head, and retains at least 100 cm along the side. One side must connect to the entrance. A second side is a preference; nightstands remain solid.
+- Offices require a desk and a linked chair. Optional guest seating is a distinct, unlinked chair. Storage is a separate preference. Desk/chair planning is atomic; it does not retain an unworkable desk alone.
+- `proposeLayout` accepts bounded `quantities: [{variantId, quantity}]` alongside existing `variantIds`. An explicit quantity replaces the matching default count. Repeated variants get distinct IDs; retries do not grow the target count. Search remains bounded, and omissions are not proof that something cannot fit.
+- Click clearance chips to show reachable (teal), preferred-tight (amber) or blocked (red hatch) zones. Issue buttons focus affected cells. Hover/focus a catalogue variant for measured footprint and clearance diagrams; drag onto the board for actual placement validation.
+
+The 3D view includes beds with headboards, frames, pillows and bedding, plus distinct bathroom fixtures. These models stay inside their declared envelopes and do not participate in validation.
+
+### Fixed bathroom concepts
+
+Bathroom fixtures belong to room inputs, not movable furniture: basin/vanity, WC, shower tray, bath and towel rail. They have exact dimensions, quarter-turn poses, optional wall anchors, human pins and explicit external approach zones. The 2D/3D fixture controls open the same human Room Editor. Unpin to edit; Stage then Confirm publishes the inputs. Agents can arrange decor but cannot move these fixtures.
+
+Clearance assumptions: basin 60 cm front; WC at least 60 cm wide × 80 cm deep front; shower 60 cm external entry; bath 60 cm along its long front side; towel rail no invented automatic zone. The 5 cm shower tray has no unmeasured tall glass. Fixture approaches remain outside solid footprints and connect to the same entrance path. Fixed fixtures fulfil their own brief without movable duplicates.
+
+Every relevant result carries `conceptualOnly` when concepts are present, including mixed room profiles. These are spatial planning demonstrations only: **no plumbing, drainage, waterproofing, electrical, ventilation, structural, installation, accessibility, regulatory or safety assessment**.
+
+### Expansion verification
+
+Regression suites cover V1/V2 reloads, isolated documents, profile roles, exact repeated quantities, every bed orientation, fixed approaches, staged profile/history, owned classification, conceptual result markers and 3D envelope alignment. `npm test` reports the current total. Browser-level checks are separate from store/renderer tests; do not infer a verified browser journey merely from unit-test success.
