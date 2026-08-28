@@ -29,7 +29,7 @@ but no tools can be discovered. To see the agent side you need one of:
 - **Google Chrome** with `chrome://flags/#enable-webmcp-testing` set to Enabled, then relaunch.
 
 Once enabled, open the live URL and the tools panel (the tools status button above the board)
-reports how many native tools registered. An agent can then call any of the 14.
+reports how many native tools registered. An agent can then call any of the 15.
 
 ### Automated native check
 
@@ -42,7 +42,7 @@ npm run test:native                                    # against localhost:3001
 npm run test:native -- https://floortris.floortris.workers.dev/
 ```
 
-It launches Chrome with the required flags, asserts all 14 tools register and
+It launches Chrome with the required flags, asserts all 15 tools register and
 carry annotations, then runs a multi-turn journey through
 `document.modelContext.executeTool`: read state, open a draft, plan a layout,
 re-check it, and confirm a stale revision is refused and the locked owned sofa
@@ -115,7 +115,7 @@ Exactly these names are registered:
 
 `getRoomState`, `listFurniture`, `listCatalogue`, `setRoomGeometry`, `setOpening`, `setConstraints`, `createProposal`, `placeFurniture`, `updateFurniture`, `removeFurniture`, `proposeLayout`, `findPlacements`, `setAppearance`, `checkLayout`.
 
-The adapter follows the **26 August 2026 draft**: [WebMCP community report](https://webmachinelearning.github.io/webmcp/). It awaits each `registerTool` result, supplies an AbortController signal as registration options for cleanup, reads `execute`'s `{signal}`, and returns the structured result directly. It only announces a registered state after all fourteen registrations resolve. Failure aborts that mount's registrations. Unsupported browsers retain the full human editor. Registration does not claim that an external agent has discovered or executed the tools.
+The adapter follows the **26 August 2026 draft**: [WebMCP community report](https://webmachinelearning.github.io/webmcp/). It awaits each `registerTool` result, supplies an AbortController signal as registration options for cleanup, reads `execute`'s `{signal}`, and returns the structured result directly. It only announces a registered state after all fifteen registrations resolve. Failure aborts that mount's registrations. Unsupported browsers retain the full human editor. Registration does not claim that an external agent has discovered or executed the tools.
 
 Tools contain `readOnlyHint` plus `untrustedContentHint: true`, since user-entered labels are data and may appear in results. No tool performs Apply, Confirm room inputs, Discard, Unlock, or changes the selected UI view.
 
@@ -249,3 +249,29 @@ Every relevant result carries `conceptualOnly` when concepts are present, includ
 ### Expansion verification
 
 Regression suites cover V1/V2 reloads, isolated documents, profile roles, exact repeated quantities, every bed orientation, fixed approaches, staged profile/history, owned classification, conceptual result markers and 3D envelope alignment. `npm test` reports the current total. Browser-level checks are separate from store/renderer tests; do not infer a verified browser journey merely from unit-test success.
+
+
+## One-call room generation
+
+Use native `generateRoom` to make a **new room**, even when the current room has
+an active or stale proposal. It takes `name`, `widthCm`, `depthCm`, `profile`,
+complete `openings` (including an entrance door), and `idempotencyKey`. Supported
+profiles are lounge, bedroom and home_office. Optional `appearance`, `variantIds`
+and `quantities` select palette IDs and named furniture variants. Bathroom
+concept fixtures still use their existing human room-input workflow.
+
+The tool uses the same bounded planner and rule engine, then atomically saves the
+previous document and the new document before switching. A failure to save,
+cancellation or intervening edit leaves the old room untouched. It never imports
+an unrelated room's owned sofa, locks or fixed radiator into the new room. Partial
+layouts report `validation`, `brief` and `omitted` honestly.
+
+The human immediately sees the generated **Proposal**, its correct room type and
+measurements in both 2D and 3D, and an updated furniture library. **Rooms → Your
+saved rooms** retains the previous room and its draft. Furniture Apply remains
+human-controlled. A single versioned `.workspace` local-storage record per sample
+session holds separate documents; legacy saves remain readable and are not
+overwritten. The active room survives reload, and `?room=<documentId>` selects a
+saved room on this device (not a public room-sharing link). Undo history stays
+within a document. Duplicate request keys are deduplicated within the active page
+session; a replay for an inactive saved room reports `room_not_active`.

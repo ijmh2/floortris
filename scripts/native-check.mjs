@@ -18,7 +18,7 @@ const FLAGS = [
   '--enable-blink-features=WebMCP',
 ];
 const EXPECTED_TOOLS = [
-  'checkLayout', 'createProposal', 'findPlacements', 'getRoomState', 'listCatalogue',
+  'checkLayout', 'createProposal', 'findPlacements', 'generateRoom', 'getRoomState', 'listCatalogue',
   'listFurniture', 'placeFurniture', 'proposeLayout', 'removeFurniture', 'setAppearance',
   'setConstraints', 'setOpening', 'setRoomGeometry', 'updateFurniture',
 ];
@@ -43,7 +43,7 @@ try {
   check('document.modelContext is exposed', hasApi, hasApi ? '' : 'is Chrome running with the WebMCP flags?');
   if (!hasApi) process.exit(1);
 
-  await page.waitForFunction(async () => (await document.modelContext.getTools()).length >= 14, null, { timeout: 20000 })
+  await page.waitForFunction(async () => (await document.modelContext.getTools()).length >= 15, null, { timeout: 20000 })
     .catch(() => {});
 
   const result = await page.evaluate(async (expected) => {

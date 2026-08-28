@@ -60,3 +60,25 @@ test('concept bath uses a measured long-side zone and towel rail has no invented
   assert.deepEqual(conceptClearance(f)!.rect,{x:20,y:75,w:170,d:60});
   assert.equal(conceptClearance({...f,kind:'towel_rail'}),undefined);
 });
+
+test('room workspace saves old drafts and new rooms atomically, reloads active and selected rooms', async () => {
+  const {saveWorkspaceRoom,loadWorkspaceRoom,readWorkspace}=await import('./persistence.ts');
+  const data=new Map<string,string>(), storage={getItem:(k:string)=>data.get(k)||null,setItem:(k:string,v:string)=>{data.set(k,v);}};
+  const original=makeCompactRoom(), generated={...makeBedroomDouble(),documentId:'room-new'};
+  data.set('legacy',JSON.stringify(original));
+  assert.deepEqual(loadWorkspaceRoom(storage,'legacy'),original);
+  saveWorkspaceRoom(storage,'legacy',generated,original);
+  assert.deepEqual(loadWorkspaceRoom(storage,'legacy'),generated);
+  assert.deepEqual(loadWorkspaceRoom(storage,'legacy','original'),original);
+  assert.deepEqual(loadWorkspaceRoom(storage,'legacy','missing-room'),generated);
+  assert.deepEqual(JSON.parse(data.get('legacy')!),original);
+  generated.room.name='Edited bedroom';saveWorkspaceRoom(storage,'legacy',generated);
+  assert.equal(readWorkspace(storage,'legacy')!.documents.length,2);
+  assert.equal(loadWorkspaceRoom(storage,'legacy')!.room.name,'Edited bedroom');
+  const snapshot=data.get('legacy.workspace');
+  assert.throws(()=>saveWorkspaceRoom({...storage,setItem:()=>{throw new Error('Quota');}},'legacy',{...generated,documentId:'room-third'},generated));
+  assert.equal(data.get('legacy.workspace'),snapshot);
+  data.set('legacy.workspace','broken');
+  assert.throws(()=>saveWorkspaceRoom(storage,'legacy',generated,original));
+  assert.equal(data.get('legacy.workspace'),'broken');
+});

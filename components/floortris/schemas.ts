@@ -10,6 +10,11 @@ const anchor = object({ wall, offsetCm: num(-1000, 1000) }, ['wall', 'offsetCm']
 const rotation = { type: 'integer', enum: [0, 90, 180, 270] };
 const kind = { type: 'string', enum: ['sofa', 'chair', 'table', 'coffee_table', 'desk', 'storage', 'bed', 'tv', 'rug', 'plant', 'other'] };
 const profileKind = { type: 'string', enum: ['lounge', 'bedroom', 'home_office', 'bathroom_concept'] };
+const generatedProfile = { anyOf: [
+  object({ kind: { enum: ['lounge'] } }, ['kind']),
+  object({ kind: { enum: ['bedroom'] }, sleeping: { enum: ['single', 'double', 'king'] }, workspace: bool, storage: bool, bedsideQuantity: integer(0, 2) }, ['kind', 'sleeping', 'workspace', 'storage']),
+  object({ kind: { enum: ['home_office'] }, seating: bool, storage: bool }, ['kind', 'seating', 'storage']),
+] };
 const openingBase = { id: str, wall, offsetCm: num(), widthCm: num(20, 400) };
 export const openingSchema = { anyOf: [
   object({ ...openingBase, kind: { enum: ['door'] }, hinge: { enum: ['start', 'end'] }, swing: { enum: ['in', 'out'] }, angle: { enum: [90] }, mechanism: { enum: ['hinged', 'pocket', 'bifold', 'sliding'] }, entrance: bool }, ['id', 'kind', 'wall', 'offsetCm', 'widthCm', 'hinge', 'swing', 'angle', 'mechanism', 'entrance']),
@@ -20,6 +25,7 @@ const mutation = { proposalId: str, revision: integer(1) };
 const mutationRequired = ['proposalId', 'revision'];
 const snapshot = { which: { enum: ['current', 'proposal'] }, revision: integer(1) };
 export const TOOL_SCHEMAS: Record<string, { description: string; inputSchema: Schema; readOnly: boolean }> = {
+  generateRoom: { readOnly: false, description: 'Start here to generate a NEW bedroom, lounge or home office in one call. Dimensions are centimetres (10 m = 1000 cm). Supply the room profile and all openings, including an entrance door. Creates and displays a separate furnished proposal; preserves the previous room, owned pieces, locks and active draft in Rooms. No Discard or setup confirmation needed for a new room. Does not apply furniture to Yours. Uses the shared bounded planner; inspect validation, brief and omitted for partial results. Retry the same request with the same idempotencyKey.', inputSchema: object({ name: str, widthCm: num(240, 1000), depthCm: num(240, 1000), profile: generatedProfile, openings: { type: 'array', items: openingSchema, maxItems: 12 }, appearance: object({ wall: str, floor: str, furniture: str }), variantIds: { type: 'array', items: str, maxItems: 8 }, quantities: { type: 'array', items: object({ variantId: str, quantity: integer(1, 4) }, ['variantId', 'quantity']), maxItems: 8 }, idempotencyKey: str }, ['name', 'widthCm', 'depthCm', 'profile', 'openings', 'idempotencyKey']) },
   getRoomState: { readOnly: true, description: 'Read accepted room, rules, authoritative ownership, revision and brief. Coordinates are centimetres, grid origin top-left; x east and y south. Never changes the selected view.', inputSchema: object(snapshot, ['which']) },
   listFurniture: { readOnly: true, description: 'List placed pieces and authoritative owned inventory with measured sizes and locks. Read only.', inputSchema: object({ ...snapshot, offset: integer(), limit: integer(1, 50) }, ['which']) },
   listCatalogue: { readOnly: true, description: 'List named available size variants and valid palette IDs. Optional profile/tag filters only narrow the list.', inputSchema: object({ kind, profile: profileKind, tag: str, offset: integer(), limit: integer(1, 50) }) },
