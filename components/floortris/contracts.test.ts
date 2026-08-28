@@ -2,6 +2,41 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from './store.ts';
 import { validate } from './engine.ts';
+import { makeCompactRoom, roomSession } from './samples.ts';
+import { makeDemo, DEFAULT_RULES } from './data.ts';
+
+test('3 m sample furnishes a separate proposal without changing owned sizes or rules',async()=>{
+  const original=makeDemo(),before=structuredClone(original),sample=makeCompactRoom(),p=sample.proposal!;
+  assert.deepEqual(original,before);
+  assert.equal(sample.room.widthCm,300);assert.equal(sample.room.depthCm,300);
+  assert.deepEqual(sample.rules,DEFAULT_RULES);assert.deepEqual(p.rules,sample.rules);
+  assert.deepEqual(sample.inventory[0].sizeCm,original.inventory[0].sizeCm);
+  assert.deepEqual(sample.inventory[0].locked,original.inventory[0].locked);
+  assert.equal(sample.current.furniture.length,1);assert.equal(p.layout.furniture.length,7);
+  assert.deepEqual(p.layout.furniture.find(f=>f.id==='owned-sofa'),sample.inventory[0]);
+  const report=validate(p.layout,p.room,p.rules,sample.inventory);
+  assert.equal(report.validation.hardFailures,0,JSON.stringify(report.issues));
+  assert.equal(report.brief.status,'satisfied');assert.ok(report.zones.every(z=>z.reachable));
+  assert.ok(report.issues.some(i=>i.code==='walk_tight'));
+  assert.ok(report.issues.some(i=>i.code==='prefer_open_floor'));
+  const store=createStore(sample);
+  assert.equal((await store.execute('updateFurniture',{proposalId:p.id,revision:p.revision,objectId:'owned-sofa',originCell:{x:0,y:0}})).error?.code,'lock_violation');
+  assert.deepEqual(store.getState().current,sample.current);
+  store.resetDemo(makeCompactRoom());
+  assert.deepEqual(store.getState(),sample);
+});
+
+test('sample sessions use separate local storage and unknown sample names preserve the original',()=>{
+  const original=roomSession(''),sample=roomSession('?sample=3m');
+  assert.notEqual(original.storageKey,sample.storageKey);
+  assert.equal(original.makeInitial().room.widthCm,600);
+  assert.equal(sample.makeInitial().room.widthCm,300);
+  assert.equal(roomSession('?sample=unknown').storageKey,original.storageKey);
+  const a=sample.makeInitial(),b=sample.makeInitial();
+  a.proposal!.layout.furniture[0].appearance='clay';
+  assert.equal(b.proposal!.layout.furniture[0].appearance,'moss');
+  assert.equal(a.current.furniture[0].appearance,'moss');
+});
 
 async function draft(kind:'layout'|'setup'='layout') {
   const store=createStore();const state=store.getState();

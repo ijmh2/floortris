@@ -278,7 +278,7 @@ export function createStore(initialState: AppState = makeDemo()) {
   const applyProposal = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'layout'), report = validate(p.layout, p.room, p.rules, state.inventory); if (report.validation.hardFailures || report.brief.status !== 'satisfied') fail('blocked_apply', 'Resolve hard failures and complete the required lounge brief before Apply.'); const next = clone(state); next.current = clone(p.layout); next.currentRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, currentRevision: state.currentRevision }; });
   const confirmSetup = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'setup'); checkRules(p.rules); const next = clone(state); next.room = clone(p.room); next.rules = clone(p.rules); next.ruleRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, ruleRevision: state.ruleRevision, validation: validate(next.current, next.room, next.rules, next.inventory).validation }; });
   const discardProposal = () => { const next = clone(state); next.proposal = null; publish(next); return { operationSucceeded: true }; };
-  const resetDemo = () => { retries.clear(); publish(makeDemo()); };
+  const resetDemo = (initial: AppState = makeDemo()) => { retries.clear(); publish(clone(initial)); };
   return { getState, subscribe, execute, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanSetRoomFinish, applyProposal, confirmSetup, discardProposal, resetDemo };
 }
 export type FloortrisStore = ReturnType<typeof createStore>;
