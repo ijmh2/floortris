@@ -103,3 +103,57 @@ test('candidate validity is local, with full remaining layout status and paginat
 test('setup commands cannot mutate an accepted layout or current geometry',async()=>{
   const store=await draft(),p=store.getState().proposal!,before=JSON.stringify(store.getState()); const result=await store.execute('setRoomGeometry',{proposalId:p.id,revision:p.revision,widthCm:1000}); assert.equal(result.operationSucceeded,false); assert.equal(JSON.stringify(store.getState()),before);
 });
+
+// The 3D projection is tested against the authoritative 2D bounds, without WebGL.
+import { Box3, Vector3, PerspectiveCamera } from 'three';
+import { buildFurniture, buildRoomScene, disposeObject, furniturePose, updateCutaway, wallPoint } from './scene3d.ts';
+import { makeCompactRoom } from './samples.ts';
+import { rotations, type Wall } from './model.ts';
+const close = (a:number,b:number) => assert.ok(Math.abs(a-b)<1e-5,`${a} ≠ ${b}`);
+
+test('3D furniture preserves measured footprints and cardinal facing for every rotation',()=>{
+  const s=makeDemo();
+  for(const rotation of rotations) {
+    const item={...clone(s.inventory[0]),rotation,elevationCm:20};
+    const mesh=buildFurniture(item,s.room),b=bounds(item),actual=new Box3().setFromObject(mesh),pose=furniturePose(item,s.room);
+    close(actual.min.x,b.x/100);close(actual.max.x,(b.x+b.w)/100);close(actual.min.z,b.y/100);close(actual.max.z,(b.y+b.d)/100);
+    close(actual.min.y,.2);close(actual.max.y,1.05);
+    const front=new Vector3(0,0,1).applyAxisAngle(new Vector3(0,1,0),pose.angle);
+    const expected=rotation===0?[0,1]:rotation===90?[-1,0]:rotation===180?[0,-1]:[1,0];
+    close(front.x,expected[0]);close(front.z,expected[1]);disposeObject(mesh);
+  }
+});
+
+test('3D wall TVs use wall anchors and elevation, while the radiator keeps its literal floor projection',()=>{
+  const s=makeDemo();
+  for(const wall of ['north','east','south','west'] as Wall[]) {
+    const tv=fromVariant('frame-tv-120','tv');tv.wallAnchor={wall,offsetCm:60};tv.originCell={x:40,y:40};tv.rotation=270;
+    const mesh=buildFurniture(tv,s.room),b=new Box3().setFromObject(mesh),pose=furniturePose(tv,s.room);
+    close(b.min.y,1.1);close(b.max.y,1.78);
+    if(wall==='north'||wall==='south'){close(b.min.x,.6);close(b.max.x,1.8);close(pose.z,wall==='north'?.03:4.77);}
+    else{close(b.min.z,.6);close(b.max.z,1.8);close(pose.x,wall==='west'?.03:5.97);}
+    disposeObject(mesh);
+  }
+  const radiator=buildFurniture(s.room.fixtures[0],s.room),b=new Box3().setFromObject(radiator);
+  close(b.min.x,5.8);close(b.max.x,6);close(b.min.z,2.8);close(b.max.z,3.8);disposeObject(radiator);
+});
+
+test('3D scene and camera cutaway never mutate room data or validation',()=>{
+  const s=makeCompactRoom(),before=JSON.stringify(s),p=s.proposal!,r=validate(p.layout,p.room,p.rules,s.inventory);
+  const scene=buildRoomScene(p.room,p.layout,p.rules),camera=new PerspectiveCamera();camera.position.set(6,5,6);
+  assert.equal(scene.pieces.size,8);updateCutaway(scene,camera,p.room,true);
+  assert.equal(scene.walls.get('south')!.visible,false);assert.equal(scene.walls.get('east')!.visible,false);assert.equal(scene.walls.get('north')!.visible,true);assert.equal(scene.walls.get('west')!.visible,true);
+  updateCutaway(scene,camera,p.room,false);assert.ok([...scene.walls.values()].every(w=>w.visible));
+  assert.equal(JSON.stringify(s),before);assert.deepEqual(validate(p.layout,p.room,p.rules,s.inventory),r);disposeObject(scene.root);
+  const unknown=clone(s.inventory[0]);unknown.sizeCm.h=null;const mesh=buildFurniture(unknown,s.room);assert.equal(mesh.userData.heightUnknown,true);assert.equal(unknown.sizeCm.h,null);disposeObject(mesh);
+});
+
+test('3D door leaf preserves the hinge endpoint and inward/outward pose on all four walls',()=>{
+  const s=makeDemo();s.current.furniture=[];s.room.fixtures=[];
+  for(const wall of ['north','east','south','west'] as Wall[])for(const hinge of ['start','end'] as const)for(const swing of ['in','out'] as const){
+    s.room.openings=[{id:'door-test',kind:'door',wall,offsetCm:40,widthCm:80,hinge,swing,mechanism:'hinged',angle:90,entrance:true}];
+    const scene=buildRoomScene(s.room,s.current,s.rules),leaf=scene.root.getObjectByName('door-door-test')!;
+    const [x,z]=wallPoint(s.room,wall,hinge==='start'?.4:1.2,swing==='in'?.4:-.4);
+    close(leaf.position.x,x);close(leaf.position.z,z);disposeObject(scene.root);
+  }
+});

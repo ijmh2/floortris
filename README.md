@@ -192,3 +192,23 @@ These changes retain the engine and the 14-tool schema. The optional native-resu
 observer cannot change a command result if a UI notification fails. Room data
 continues to use the original local-storage format. No import, undo or general
 fixed-fixture editor was added in this UI pass.
+
+## 3D architectural view
+
+The **2D / 3D** toggle is presentation-only. Yours, Proposal and Compare use the
+same accepted/proposed records and the same 14 native tool contracts. Three.js
+loads only when the human selects 3D. Placement, checked ghosts and rule overlays
+remain on the 2D board; the existing inspector can still edit a selected piece.
+
+The renderer offers orbit, zoom, reset camera, optional wall cutaway and selection
+by click or an accessible furniture selector. It displays measured dimensions,
+cardinal rotations, wall-mounted TVs, window apertures, open door leaves and the
+fixed radiator. Wall/floor/furniture palettes follow the current document. Render
+resources, controls and event listeners are disposed when leaving 3D. A graphics
+or chunk-load failure offers a return to the intact 2D planner.
+
+These are simplified architectural models: door height is illustrative (2.1 m,
+capped at the ceiling), null furniture heights use disclosed translucent 1 m
+placeholders, window movement and real optical sightlines are not simulated.
+No renderer mesh participates in validation. The existing TV height-strip and
+walking assumptions stay unchanged, and comfort warnings remain visible.
