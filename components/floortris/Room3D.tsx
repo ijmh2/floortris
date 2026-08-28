@@ -32,7 +32,7 @@ export default function Room3D(props: Props) {
       render: () => { if(disposed||frame)return;frame=requestAnimationFrame(()=>{frame=0;if(disposed)return;if(rt.model)updateCutaway(rt.model,camera,rt.room,rt.cutaway);renderer.render(scene,camera);}); },
       reset: () => {
         const w=rt.room.widthCm/100,d=rt.room.depthCm/100,span=Math.max(w,d),height=latest.current.rules.ceilingCm/100;
-        controls.target.set(w/2,height*.21,d/2);camera.position.set(w/2+span*.95,height+span*.82,d/2+span*1.15);camera.zoom=1;
+        controls.target.set(w/2,height*.48,d/2);camera.position.set(w/2+span*.95,height*1.27+span*.82,d/2+span*1.15);camera.zoom=1;
         const aspect=Math.max(.1,el.clientWidth/Math.max(1,el.clientHeight)),size=Math.max(span*1.28,span/aspect*1.15)+height*.62;
         camera.left=-size*aspect/2;camera.right=size*aspect/2;camera.top=size/2;camera.bottom=-size/2;camera.updateProjectionMatrix();controls.update();
         sun.position.set(-span*.45,height+span*.9,-span*.25);sun.target.position.set(w/2,0,d/2);
