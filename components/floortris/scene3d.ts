@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { bounds } from './engine.ts';
 import { PALETTES } from './data.ts';
+import { finishMaterial, mapFinishUV, type TextureOptions } from './finish-material.ts';
 import type { Furniture, Layout, Room, Rules, Wall } from './model.ts';
 
 // Metres in the renderer, centimetres in the document. +X east, +Z south, +Y up.
@@ -169,15 +170,18 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
 }
 
 export type RoomScene = { root: THREE.Group; walls: Map<Wall, THREE.Group>; pieces: Map<string, THREE.Group> };
-export function buildRoomScene(room: Room, layout: Layout, rules: Rules): RoomScene {
+export function buildRoomScene(room: Room, layout: Layout, rules: Rules, textures: TextureOptions = {}): RoomScene {
   const root = new THREE.Group(), walls = new Map<Wall, THREE.Group>(), pieces = new Map<string, THREE.Group>();
   const w = room.widthCm / 100, d = room.depthCm / 100, h = rules.ceilingCm / 100;
-  const floor = material(colorFor(layout.appearance.floor,'floor')), wallMat = material(colorFor(layout.appearance.wall,'wall'));
+  const floorFinish = PALETTES.floor.find(p => p.id === layout.appearance.floor);
+  const floor = finishMaterial(floorFinish, textures), wallMat = finishMaterial(PALETTES.wall.find(p => p.id === layout.appearance.wall), textures);
   box(root,[w + .16,.14,d + .16],[w / 2,-.07,d / 2],material('#d2c7b4'),.03);
-  box(root,[w,.018,d],[w / 2,-.009,d / 2],floor);
-  const seam = material('#c7b99f');
-  for (let x = .18; x < w; x += .18) { const line = box(root,[.002,.001,d],[x,.001,d / 2],seam); line.castShadow=false; }
-  for (let x = 0; x < w; x += .18) for (let z = (Math.round(x / .18) % 3) * .43 + .43; z < d; z += 1.29) { const line = box(root,[Math.min(.18,w-x),.001,.002],[x + Math.min(.18,w-x)/2,.001,z],seam); line.castShadow=false; }
+  mapFinishUV(box(root,[w,.018,d],[w / 2,-.009,d / 2],floor), 'floor');
+  if (!floorFinish?.texture) {
+    const seam = material('#c7b99f');
+    for (let x = .18; x < w; x += .18) { const line = box(root,[.002,.001,d],[x,.001,d / 2],seam); line.castShadow=false; }
+    for (let x = 0; x < w; x += .18) for (let z = (Math.round(x / .18) % 3) * .43 + .43; z < d; z += 1.29) { const line = box(root,[Math.min(.18,w-x),.001,.002],[x + Math.min(.18,w-x)/2,.001,z],seam); line.castShadow=false; }
+  }
   for (const wall of ['north','east','south','west'] as Wall[]) {
     const group = new THREE.Group(); group.name = `wall-${wall}`; walls.set(wall,group); root.add(group);
     const length = wall === 'north' || wall === 'south' ? w : d;
@@ -186,7 +190,8 @@ export function buildRoomScene(room: Room, layout: Layout, rules: Rules): RoomSc
     const slab = (a:number,b:number,bottom:number,top:number,mat=wallMat,thickness=.08,inset=-.04) => {
       if(b<=a||top<=bottom)return;
       const [x,z]=wallPoint(room,wall,(a+b)/2,inset),horizontal=wall==='north'||wall==='south';
-      box(group,horizontal?[b-a,top-bottom,thickness]:[thickness,top-bottom,b-a],[x,(top+bottom)/2,z],mat);
+      const mesh = box(group,horizontal?[b-a,top-bottom,thickness]:[thickness,top-bottom,b-a],[x,(top+bottom)/2,z],mat);
+      if (mat === wallMat) mapFinishUV(mesh, horizontal ? 'north-south' : 'east-west');
     };
     for (let i=0;i<cuts.length-1;i++) {
       const a=cuts[i],b=cuts[i+1],mid=(a+b)/2;

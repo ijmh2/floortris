@@ -1,0 +1,7 @@
+.ft-overhaul .ft-finish-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:14px 0; }
+.ft-overhaul .ft-finish-card { overflow:hidden; padding:0; border:1px solid #d3d9c8; border-radius:10px; background:#fafbf6; color:#294a34; text-align:left; cursor:pointer; }
+.ft-overhaul .ft-finish-card.active { border:2px solid #345b3e; box-shadow:0 0 0 2px #e2e9d9; }
+.ft-overhaul .ft-finish-card:focus-visible { outline:3px solid #345b3e; outline-offset:3px; }
+.ft-overhaul .ft-finish-card:disabled { cursor:not-allowed; opacity:.55; }
+.ft-overhaul .ft-finish-preview { display:block; height:84px; background-position:center; background-size:cover; }
+.ft-overhaul .ft-finish-label { display:flex; justify-content:space-between; align-items:center; gap:5px; padding:9px; font-size:12px; font-weight:600; }

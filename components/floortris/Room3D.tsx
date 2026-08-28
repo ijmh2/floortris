@@ -10,6 +10,7 @@ type Runtime = { renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THRE
 export default function Room3D(props: Props) {
   const host = useRef<HTMLDivElement>(null), runtime = useRef<Runtime | null>(null), latest = useRef(props);
   const [error, setError] = useState<string | null>(null), [cutaway, setCutaway] = useState(true);
+  const [textureWarning, setTextureWarning] = useState(false);
   useEffect(() => { latest.current = props; });
   useEffect(() => {
     const el = host.current!;
@@ -70,9 +71,15 @@ export default function Room3D(props: Props) {
   },[]);
   useEffect(()=>{
     const rt=runtime.current;if(!rt)return;
+    let active = true;
+    queueMicrotask(() => { if (active) setTextureWarning(false); });
     const resized=rt.room.widthCm!==props.room.widthCm||rt.room.depthCm!==props.room.depthCm;
     if(rt.model){rt.scene.remove(rt.model.root);disposeObject(rt.model.root);}
-    rt.room=props.room;rt.model=buildRoomScene(props.room,props.layout,props.rules);rt.scene.add(rt.model.root);rt.select(latest.current.selected);if(resized)rt.reset();rt.render();
+    rt.room=props.room;rt.model=buildRoomScene(props.room,props.layout,props.rules, {
+      onTextureLoad: () => { if (active) rt.render(); },
+      onTextureError: () => { if (active) queueMicrotask(() => { if (active) setTextureWarning(true); }); },
+    });rt.scene.add(rt.model.root);rt.select(latest.current.selected);if(resized)rt.reset();rt.render();
+    return () => { active = false; };
   },[props.room,props.layout,props.rules]);
   useEffect(()=>{runtime.current?.select(props.selected);},[props.selected]);
   useEffect(()=>{if(runtime.current){runtime.current.cutaway=cutaway;runtime.current.render();}},[cutaway]);
@@ -88,6 +95,7 @@ export default function Room3D(props: Props) {
     {props.onEditRoom&&props.room.fixtures.length>0&&<button className="ft-text-button" onClick={props.onEditRoom}>Edit fixed fixtures ↗</button>}
     {concepts&&<p className="ft-3d-note">Bathroom concept only · fixed equipment and assumed access zones. No plumbing, installation or safety compliance assessment. Shower tray shown without an unmeasured enclosure.</p>}
     {unknown.length>0&&<p className="ft-3d-note">Height unknown: {unknown.map(f=>f.label).join(', ')}. Dashed boxes use a 1 m visual placeholder, not a measured height.</p>}
+    {textureWarning&&<p className="ft-3d-note" role="status">A finish image could not load. Its base colour is shown; your layout and checks are unchanged.</p>}
     <p className="ft-3d-note">Same room, same rules. Door height is illustrative; TV visibility is still the 2D height-strip check.</p>
   </section>;
 }

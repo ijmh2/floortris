@@ -25,7 +25,11 @@ with WebMCP or prove the human can see an isolated browser session. The registra
 badge says only that this page registered its tools. Saved room URLs select local
 documents; they do not transfer data across browsers or devices.
 
-## Run locally
+## Texture pack
+
+Studio 01 adds four wallpapers (sage botanical, clay arches, blue gingham, woven linen) and two floors (pale oak planks, warm terrazzo). Choose thumbnails in Room → Walls / Floor. Agents use the same catalogue IDs through listCatalogue and setAppearance. Wallpaper previews in 3D; floors also show in the 2D furniture view. Finishes do not change rule flags or existing saved choices. See [texture-pack notes](docs/texture-pack.md) and [generation prompts](docs/texture-prompts.json).
+
+## Local development
 
 Use Node 22.13+ and npm. From this directory:
 

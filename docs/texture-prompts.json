@@ -1,0 +1,31 @@
+{
+  "name": "Floortris Studio 01",
+  "generatedWith": "Built-in image-generation tool",
+  "notes": "Six generated concept finishes. Not real product SKUs. Original PNGs are retained; optimized WebP files are used in the app. 3D uses mirrored repeats with physical repeat dimensions. Generated borders may not be mathematically seamless. Finishes never alter layout or validation flags.",
+  "prompts": [
+    {
+      "id": "sage-botanical",
+      "prompt": "Use case: stylized-concept. Asset type: one-repeat square material texture for a 3D room planner, 1024x1024. Generate ONE flat orthographic, edge-to-edge surface swatch, no room mockup, no perspective, no frame, no lettering, no logo, no watermark, no objects, no lighting gradient or cast shadows. Even neutral illumination, restrained premium home-interior finish. Make opposite edges tile seamlessly, with continuous pattern and uniform detail across the full image. Wallpaper: graceful small sage-green fern and eucalyptus sprigs arranged in a balanced scattered repeating print on warm ivory paper. Delicate hand-painted matte shapes in muted sage and olive, fine pale stems, ample ivory breathing room. Natural botanical print, no flowers, no dark background. Pattern repeat represents 60 x 60 cm."
+    },
+    {
+      "id": "clay-arches",
+      "prompt": "Use case: stylized-concept. Asset type: one-repeat square material texture for a 3D room planner, 1024x1024. Generate ONE flat orthographic, edge-to-edge surface swatch, no room mockup, no perspective, no frame, no lettering, no logo, no watermark, no objects, no lighting gradient or cast shadows. Even neutral illumination, restrained premium home-interior finish. Make opposite edges tile seamlessly, with continuous pattern and uniform detail across the full image. Wallpaper: elegant repeating modern arches and half circles drawn with narrow terracotta and dusty apricot lines on pale warm cream paper. Small-scale soft geometric rhythm, understated mid-century style, consistent line weight, no 3D shading. Pattern repeat represents 80 x 80 cm."
+    },
+    {
+      "id": "blue-gingham",
+      "prompt": "Use case: stylized-concept. Asset type: one-repeat square material texture for a 3D room planner, 1024x1024. Generate ONE flat orthographic, edge-to-edge surface swatch, no room mockup, no perspective, no frame, no lettering, no logo, no watermark, no objects, no lighting gradient or cast shadows. Even neutral illumination, restrained premium home-interior finish. Make opposite edges tile seamlessly, with continuous pattern and uniform detail across the full image. Wallpaper: refined small gingham check with muted powder blue, faded denim blue and warm ivory squares. Perfect orthogonal grid, subtle soft woven paper grain, regular simple checks with low contrast, cosy contemporary student bedroom aesthetic. Pattern repeat represents 40 x 40 cm."
+    },
+    {
+      "id": "woven-linen",
+      "prompt": "Use case: stylized-concept. Asset type: one-repeat square material texture for a 3D room planner, 1024x1024. Generate ONE flat orthographic, edge-to-edge surface swatch, no room mockup, no perspective, no frame, no lettering, no logo, no watermark, no objects, no lighting gradient or cast shadows. Even neutral illumination, restrained premium home-interior finish. Make opposite edges tile seamlessly, with continuous pattern and uniform detail across the full image. Wallpaper: natural oatmeal linen weave, warm greige and ivory fibres, fine horizontal and vertical woven threads, tactile but very subtle, calm uniform neutral base with minute organic fibre variation. No folds, no creases, no stains, no lighting gradient. Texture repeat represents 40 x 40 cm."
+    },
+    {
+      "id": "pale-oak",
+      "prompt": "Use case: stylized-concept. Asset type: one-repeat square material texture for a 3D room planner, 1024x1024. Generate ONE flat orthographic, edge-to-edge surface swatch, no room mockup, no perspective, no frame, no lettering, no logo, no watermark, no objects, no lighting gradient or cast shadows. Even neutral illumination, restrained premium home-interior finish. Make opposite edges tile seamlessly, with continuous pattern and uniform detail across the full image. Flooring: pale washed European oak straight planks, parallel vertical grain and staggered short end joints, thin tight natural seams, matte finish, warm blond beige wood, understated realistic fine grain with a few subtle knots. Show exactly four equal-width vertical planks across the square; no border, no strong dark outlines, no herringbone. Texture repeat represents 120 x 120 cm."
+    },
+    {
+      "id": "warm-terrazzo",
+      "prompt": "Use case: stylized-concept. Asset type: one-repeat square material texture for a 3D room planner, 1024x1024. Generate ONE flat orthographic, edge-to-edge surface swatch, no room mockup, no perspective, no frame, no lettering, no logo, no watermark, no objects, no lighting gradient or cast shadows. Even neutral illumination, restrained premium home-interior finish. Make opposite edges tile seamlessly, with continuous pattern and uniform detail across the full image. Flooring: warm off-white matte terrazzo with irregular small chips of muted terracotta, sage, sand, pale grey and charcoal. Many fine chips, sparse medium chips, balanced distribution, realistic polished aggregate with no reflection or shadow. No tile grout lines. Texture repeat represents 80 x 80 cm."
+    }
+  ]
+}

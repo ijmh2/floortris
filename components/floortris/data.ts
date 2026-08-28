@@ -1,9 +1,20 @@
 import type { AppState, Furniture, Kind, RoomProfile, Rules, Size } from './model.ts';
 export type Variant = { id: string; name: string; kind: Kind; sizeCm: Size; description: string; palette: string; tags?: string[]; recommendedProfiles?: RoomProfile['kind'][] };
-export const PALETTES = {
+export type Finish = { id: string; name: string; color: string; description?: string; tags?: string[]; pack?: string; conceptOnly?: boolean; texture?: { url: string; repeatCm: [number, number]; kind: 'wallpaper' | 'flooring' } };
+export const PALETTES: Record<'furniture' | 'wall' | 'floor', Finish[]> = {
   furniture: [{ id: 'moss', name: 'Moss', color: '#8d9c83' }, { id: 'oat', name: 'Oat', color: '#d7cdbd' }, { id: 'clay', name: 'Clay', color: '#bd856b' }, { id: 'graphite', name: 'Graphite', color: '#58615f' }, { id: 'oak', name: 'Oak', color: '#c3a782' }],
-  wall: [{ id: 'cream', name: 'Chalk', color: '#f4f1e8' }, { id: 'stone', name: 'Stone', color: '#e7e5dd' }, { id: 'warm', name: 'Warm white', color: '#f5eade' }],
-  floor: [{ id: 'oak', name: 'Light oak', color: '#e8dfce' }, { id: 'ash', name: 'Ash', color: '#e6e5df' }, { id: 'cork', name: 'Cork', color: '#dcc5a7' }],
+  wall: [
+    { id: 'cream', name: 'Chalk', color: '#f4f1e8' }, { id: 'stone', name: 'Stone', color: '#e7e5dd' }, { id: 'warm', name: 'Warm white', color: '#f5eade' },
+    { id: 'sage-botanical', name: 'Sage botanical', color: '#e5e8d9', description: 'Sage leaves on ivory paper; calm botanical wallpaper.', tags: ['botanical', 'sage', 'calm'], pack: 'studio-01', conceptOnly: true, texture: { url: '/textures/sage-botanical.webp', repeatCm: [60, 60], kind: 'wallpaper' } },
+    { id: 'clay-arches', name: 'Clay arches', color: '#edd8c6', description: 'Terracotta geometric arches on cream; warm graphic wallpaper.', tags: ['geometric', 'terracotta', 'warm'], pack: 'studio-01', conceptOnly: true, texture: { url: '/textures/clay-arches.webp', repeatCm: [80, 80], kind: 'wallpaper' } },
+    { id: 'blue-gingham', name: 'Blue gingham', color: '#d6e2e8', description: 'Soft blue and ivory checks; a cosy woven-paper look.', tags: ['check', 'blue', 'cosy'], pack: 'studio-01', conceptOnly: true, texture: { url: '/textures/blue-gingham.webp', repeatCm: [40, 40], kind: 'wallpaper' } },
+    { id: 'woven-linen', name: 'Woven linen', color: '#ded4c4', description: 'Fine oatmeal linen weave; quiet neutral wallpaper.', tags: ['linen', 'neutral', 'minimal'], pack: 'studio-01', conceptOnly: true, texture: { url: '/textures/woven-linen.webp', repeatCm: [40, 40], kind: 'wallpaper' } },
+  ],
+  floor: [
+    { id: 'oak', name: 'Light oak', color: '#e8dfce' }, { id: 'ash', name: 'Ash', color: '#e6e5df' }, { id: 'cork', name: 'Cork', color: '#dcc5a7' },
+    { id: 'pale-oak', name: 'Pale oak planks', color: '#dfcbae', description: 'Pale matte oak with natural grain and straight planks.', tags: ['wood', 'oak', 'natural'], pack: 'studio-01', conceptOnly: true, texture: { url: '/textures/pale-oak.webp', repeatCm: [120, 120], kind: 'flooring' } },
+    { id: 'warm-terrazzo', name: 'Warm terrazzo', color: '#ece1d4', description: 'Cream terrazzo with small clay, sage and charcoal chips.', tags: ['terrazzo', 'speckled', 'warm'], pack: 'studio-01', conceptOnly: true, texture: { url: '/textures/warm-terrazzo.webp', repeatCm: [80, 80], kind: 'flooring' } },
+  ],
 };
 export const CATALOGUE: Variant[] = [
   { id: 'arc-sofa-200', name: 'Arc sofa · 200', kind: 'sofa', sizeCm: { w: 200, d: 80, h: 82 }, description: 'A generous three seat sofa', palette: 'moss', recommendedProfiles: ['lounge'] } ,
