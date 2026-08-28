@@ -130,6 +130,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (!existing && !a.variantId) fail('invalid_arguments', 'Supply objectId or variantId.');
     let piece = existing ? clone(existing) : fromVariant(a.variantId, '__candidate__');
     if (existing && a.variantId) piece = checkPatch(existing, { variantId: a.variantId }, p.layout);
+    if (piece.kind === 'chair' && a.linkedDeskId) piece.linkedDeskId = a.linkedDeskId;
     if (piece.kind === 'tv' && !piece.targetSofaId) piece.targetSofaId = p.layout.furniture.find(o => o.kind === 'sofa')?.id;
     const base = validate(p.layout, p.room, p.rules, state.inventory), baseBlocks = new Set(base.issues.filter(i => i.severity === 'block').map(issueSignature));
     const found: Candidate[] = [], positions: HumanPatch[] = [], seen = new Set<string>(), started = Date.now(); let trials = 0;
@@ -140,7 +141,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       const walls = sofa ? [faces[sofa.rotation], ...(['north', 'west', 'east', 'south'] as const).filter(w => w !== faces[sofa.rotation])] : ['north', 'west', 'east', 'south'] as const;
       for (const wall of walls) { const length = wall === 'north' || wall === 'south' ? p.room.widthCm : p.room.depthCm; const b = sofa && bounds(sofa); const centered = b ? Math.round(((wall === 'north' || wall === 'south' ? b.x + b.w / 2 : b.y + b.d / 2) - piece.sizeCm.w / 2) / 20) * 20 : 0; positions.push({ wallAnchor: { wall, offsetCm: Math.max(0, centered) }, originCell: piece.originCell, rotation: piece.rotation }); for (let offsetCm = 0; offsetCm <= length - piece.sizeCm.w; offsetCm += 20) positions.push({ wallAnchor: { wall, offsetCm }, originCell: piece.originCell, rotation: piece.rotation }); }
     } else {
-      const sofa = p.layout.furniture.find(o => o.kind === 'sofa'), b = sofa && bounds(sofa);
+      const sofa = p.layout.furniture.find(o => o.kind === 'sofa'), b = sofa && bounds(sofa), bed = p.layout.furniture.find(o => o.kind === 'bed');
       if (piece.kind === 'bed') {
         // Centre the head on a wall first; try either side of a central window
         // before falling back to the general scan. Keep exact catalogue sizes.
@@ -159,7 +160,20 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         const target = frontBand(desk, p.rules.chairPullCm), rotation = ((desk.rotation + 180) % 360) as Furniture['rotation'], bb = bounds({ ...piece, rotation });
         positions.push({ originCell: { x: Math.round((target.x + (target.w - bb.w) / 2) / 20), y: Math.round((target.y + (target.d - bb.d) / 2) / 20) }, rotation });
       }
-      if (piece.kind === 'desk') positions.push({ originCell: { x: 0, y: 4 }, rotation: 270 }, { originCell: { x: cols - 3, y: 4 }, rotation: 90 });
+      if (piece.kind === 'desk') {
+        const headWall = bed && faces[((bed.rotation + 180) % 360) as Furniture['rotation']];
+        for (const window of p.room.openings.filter(o => o.kind === 'window').sort((a, b) => Number(a.wall === headWall) - Number(b.wall === headWall))) {
+          const along = Math.round((window.offsetCm + window.widthCm / 2 - piece.sizeCm.w / 2) / 20), depth = Math.ceil(piece.sizeCm.d / 20);
+          positions.push({ originCell: window.wall === 'north' || window.wall === 'south' ? { x: along, y: window.wall === 'north' ? 0 : rows - depth } : { x: window.wall === 'west' ? 0 : cols - depth, y: along }, rotation: ({ north: 0, east: 90, south: 180, west: 270 } as const)[window.wall] });
+        }
+        positions.push({ originCell: { x: 0, y: 4 }, rotation: 270 }, { originCell: { x: cols - 3, y: 4 }, rotation: 90 });
+      }
+      if (bed && (piece.kind === 'rug' || piece.variantId === 'fold-bench-100')) {
+        const bb = bounds(bed), rotation = bed.rotation, pb = bounds({ ...piece, rotation }), face = faces[rotation], inset = piece.kind === 'rug' ? -Math.min(pb.w, pb.d) / 2 : 40;
+        const x = face === 'east' ? bb.x + bb.w + inset : face === 'west' ? bb.x - pb.w - inset : bb.x + (bb.w - pb.w) / 2;
+        const y = face === 'south' ? bb.y + bb.d + inset : face === 'north' ? bb.y - pb.d - inset : bb.y + (bb.d - pb.d) / 2;
+        positions.push({ originCell: { x: Math.round(x / 20), y: Math.round(y / 20) }, rotation });
+      }
       if (piece.kind === 'coffee_table' && b) positions.push({ originCell: { x: Math.round((b.x + b.w / 2 - piece.sizeCm.w / 2) / 20), y: Math.floor((b.y - p.rules.walkHardCm - piece.sizeCm.d) / 20) }, rotation: 0 });
       if (piece.kind === 'rug' && b) positions.push({ originCell: { x: Math.floor((b.x + b.w / 2 - piece.sizeCm.w / 2) / 20), y: Math.floor((b.y - piece.sizeCm.d + 40) / 20) }, rotation: 0 });
       positions.push({ originCell: piece.originCell, rotation: piece.rotation });
@@ -285,7 +299,8 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           const quantityVariants = new Set((a.quantities || []).map((q: { variantId: string }) => q.variantId));
           const wanted = [...requested.filter(id => !quantityVariants.has(id)), ...(a.quantities || []).flatMap((q: { variantId: string; quantity: number }) => Array.from({ length: q.quantity }, () => q.variantId))];
           for (const kind of p.rules.requiredKinds) if (!p.layout.furniture.some(o => o.kind === kind) && !wanted.some(id => CATALOGUE.find(v => v.id === id)?.kind === kind)) { const variant = CATALOGUE.find(v => v.kind === kind); if (variant) wanted.push(variant.id); }
-          wanted.sort((a, b) => (priority[CATALOGUE.find(v => v.id === a)!.kind] || 9) - (priority[CATALOGUE.find(v => v.id === b)!.kind] || 9));
+          const rank = (id: string) => { const variant = CATALOGUE.find(v => v.id === id)!; return variant.tags?.includes('bedside') ? 2.5 : priority[variant.kind] || 9; };
+          wanted.sort((a, b) => rank(a) - rank(b));
           let trials = 0; const start = Date.now();
           for (const object of [...p.layout.furniture]) {
             const report = validate(p.layout, p.room, p.rules, state.inventory); if (!report.issues.some(i => i.severity === 'block' && i.objectIds.includes(object.id))) continue;
@@ -323,7 +338,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
               // reserve the desk, then test and link its chair before retaining it.
               if (object.kind === 'desk' && linkedChairVariant && !p.layout.furniture.some(chair => chair.kind === 'chair' && chair.linkedDeskId === object.id)) {
                 const chairVariant = linkedChairVariant;
-                const chair = await search(p, { variantId: chairVariant, limit: 1 }, signal, 900); trials += chair.trials;
+                const chair = await search(p, { variantId: chairVariant, linkedDeskId: object.id, limit: 1 }, signal, 900); trials += chair.trials;
                 if (chair.found[0]) { const cc = chair.found[0], linked = fromVariant(chairVariant, `planned-${p.id}-${p.revision}-${chairVariant}-linked-${requestIndex + 1}`); Object.assign(linked, { originCell: cc.originCell, rotation: cc.rotation, linkedDeskId: object.id }); p.layout.furniture.push(linked); }
                 else { p.layout.furniture = p.layout.furniture.filter(o => o.id !== object.id); p.omitted.push({ variantId, reason: 'Desk omitted because no linked chair could be placed in the same bounded work arrangement.' }); }
               }

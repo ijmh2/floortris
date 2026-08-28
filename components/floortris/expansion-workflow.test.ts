@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validate } from './engine.ts';
+import { bounds, frontBand, validate } from './engine.ts';
 import { clone } from './model.ts';
 import { roomEditStamp } from './room-inputs.ts';
 import { makeBathroomConcept } from './samples.ts';
@@ -58,7 +58,7 @@ const bedroomRequest = (key: string) => ({
 test('generateRoom creates and displays the requested bedroom without discarding a locked lounge draft', async () => {
   const store = createStore();
   await store.execute('createProposal', {kind:'layout',expectedCurrentRevision:1,expectedRuleRevision:1,idempotencyKey:'old'});
-  const before = clone(store.getState()), request = bedroomRequest('new-bedroom');
+  const before = clone(store.getState()), request = { ...bedroomRequest('new-bedroom'), variantIds: ['haven-king-160','tallline-wardrobe-160','line-desk-140','nest-chair-60','nook-bedside-40','fold-bench-100','weave-rug-200','fern-40'], quantities: [{variantId:'nook-bedside-40',quantity:2}] };
   const result = await store.execute('generateRoom', request);
   assert.equal(result.operationSucceeded, true, JSON.stringify(result));
   assert.equal(result.generatedRoom, true); assert.equal(result.selectedView, 'proposal');
@@ -76,7 +76,11 @@ test('generateRoom creates and displays the requested bedroom without discarding
   assert.equal(report.brief.status, 'satisfied', JSON.stringify(result));
   assert.equal(proposal.layout.furniture.filter(o=>o.kind==='bed').length, 1);
   assert.equal(proposal.layout.furniture.filter(o=>o.tags.includes('bedside')).length, 2);
-  assert.equal(report.issues.some(i=>i.code==='prefer_bedside_near_bed'),false);
+  assert.equal(report.validation.warnings,0,JSON.stringify(report.issues));
+  assert.deepEqual(proposal.omitted,[]);
+  const desk=proposal.layout.furniture.find(o=>o.kind==='desk')!, chair=proposal.layout.furniture.find(o=>o.linkedDeskId===desk.id)!;
+  const approach=frontBand(desk,proposal.rules.chairPullCm), cb=bounds(chair);
+  assert.ok(cb.x>=approach.x && cb.y>=approach.y && cb.x+cb.w<=approach.x+approach.w && cb.y+cb.d<=approach.y+approach.d);
   assert.equal(store.getHistory().canUndo, false); // History never crosses documents.
   const replay = await store.execute('generateRoom', request);
   assert.equal(replay.idempotentReplay, true); assert.equal(replay.documentId, result.documentId);
