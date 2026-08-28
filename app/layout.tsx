@@ -7,7 +7,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const origin = requestHeaders.get('x-floortris-request-origin') || 'http://localhost:3001';
   const image = new URL('/og.png', origin).href;
   const title = 'Floortris — Make room for better';
-  const description = 'A room planner people and agents share. Place real furniture, inspect the rules, and approve every proposal.';
+  const description = 'A room planner people and agents share through native WebMCP. Agents use generateRoom to create proposals; humans review and Apply.';
   return {
     metadataBase: new URL(origin), title, description,
     openGraph: { title, description, type: 'website', images: [{ url: image, width: 1731, height: 909, alt: 'Floortris — A room planner people and agents share.' }] },
@@ -16,5 +16,5 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}</body></html>;
+  return <html lang="en"><head><link rel="help" href="/agent-guide" title="Native WebMCP agent guide" /></head><body>{children}</body></html>;
 }

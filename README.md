@@ -4,8 +4,11 @@ A working room planner people and agents share. The page owns the rule engine; n
 
 ## Agent entry point
 
-The first viewport and initial HTML explicitly direct agents to native WebMCP:
-`generateRoom` → Proposal → human review. `/agent-guide` explains discovery in the
+Native WebMCP tools register automatically on planner mount, without a banner or
+manual activation. Page metadata names WebMCP and a standard `rel="help"` link
+points to `/agent-guide`; the same guide is available in the WebMCP panel.
+These are discovery hints, not a guarantee of support in every agent runtime.
+The workflow remains `generateRoom` → Proposal → human review. The guide explains discovery in the
 human's existing planner tab, exact centimetre inputs, verification, existing-room
 edits, and local-only room links. It does not register tools itself or invent a
 runtime-specific discovery command. Read the tool schema on the planner tab.

@@ -5,7 +5,7 @@ import { registerFloortrisTools, type WebMCPState } from './webmcp.ts';
 import { AGENT_TOOL_POLICY, AGENT_UNAVAILABLE, BEDROOM_TOOL_EXAMPLE } from './agent-workflow.ts';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import AgentGuide, { AgentEntry } from './AgentGuide.tsx';
+import AgentGuide from './AgentGuide.tsx';
 import type { CommandResult } from './model.ts';
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 
@@ -40,11 +40,7 @@ test('partial asynchronous registration failure cancels this mount and never cla
   assert.ok(statuses.at(-1)?.message.includes(AGENT_UNAVAILABLE));
 });
 
-test('agent instructions render before browser hydration and point to the native workflow',()=>{
-  const entry=renderToStaticMarkup(createElement(AgentEntry));
-  assert.match(entry,/Agents: use WebMCP/);assert.match(entry,/generateRoom/);
-  assert.match(entry,/href="\/agent-guide"/);assert.match(entry,/human clicks Apply/);
-  assert.match(entry,/do not use the manual planner as a fallback/);
+test('the optional agent guide explains native discovery and same-browser visibility without hydration',()=>{
   const guide=renderToStaticMarkup(createElement(AgentGuide));
   assert.match(guide,/not a remote MCP endpoint/);
   assert.match(guide,/does not transfer a room to another browser/);

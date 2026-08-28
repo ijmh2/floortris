@@ -1,14 +1,6 @@
 import React from 'react';
 import { AGENT_TOOL_POLICY, AGENT_UNAVAILABLE, BEDROOM_TOOL_EXAMPLE } from './agent-workflow.ts';
 
-/** Visible before hydration as well as in the working planner. */
-export function AgentEntry() {
-  return <aside className="ft-agent-entry" aria-label="Agent workflow">
-    <p><strong>Agents: use WebMCP.</strong> Start with <code>generateRoom</code> → Proposal. The human clicks Apply. <a href="/agent-guide" target="_blank" rel="noopener">Agent guide ↗</a></p>
-    <p>No native tool access? Report the blocker; do not use the manual planner as a fallback.</p>
-  </aside>;
-}
-
 export default function AgentGuide() {
   return <article className="ft-agent-guide-content">
     <h2>Connect to the planner tab</h2>
