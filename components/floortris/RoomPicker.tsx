@@ -51,6 +51,7 @@ export default function RoomPicker({ currentId, currentName, savedRooms, samples
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openAndFocus(event.key === 'ArrowUp'); }
     }}>
       <span>Rooms</span>
+      <svg className={`ft-menu-chevron${open ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
     </button>
     {open && <div id="ft-room-menu" className="ft-room-menu" role="menu" aria-label="Open a saved room or sample" onKeyDown={onMenuKeyDown} onBlur={event => {
       if (!event.currentTarget.contains(event.relatedTarget as Node | null) && event.relatedTarget !== trigger.current) setOpen(false);

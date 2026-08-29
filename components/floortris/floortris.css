@@ -210,6 +210,9 @@
 .ft-overhaul .ft-header-actions{grid-area:actions;order:initial;margin:0;gap:10px}
 .ft-room-picker-trigger{height:38px;display:inline-flex;align-items:center;justify-content:center;padding:0 14px;border:1px solid #cfd8c9;border-radius:9px;background:#f6f8f1;color:#36533c;font-weight:650;font-size:12px;white-space:nowrap}
 .ft-room-picker-trigger:hover,.ft-room-picker-trigger[aria-expanded=true]{background:#edf2e7;border-color:#aebeaa}
+.ft-menu-button{min-width:102px}
+.ft-menu-chevron{width:14px;height:14px;display:block;flex:0 0 14px;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;fill:none;transition:transform .16s ease}
+.ft-menu-chevron.is-open{transform:rotate(180deg)}
 .ft-room-menu{position:absolute;top:calc(100% + 8px);left:0;z-index:75;width:min(310px,calc(100vw - 24px));max-height:min(420px,calc(100vh - 96px));overflow:auto;padding:7px;background:#fffef9;border:1px solid #ccd6c5;border-radius:12px;box-shadow:0 18px 48px #2337292b}
 .ft-room-menu-group{display:grid;gap:2px}
 .ft-room-menu-samples{border-top:1px solid #e2e7dc;margin-top:7px;padding-top:7px}
@@ -241,6 +244,20 @@
 .ft-room-check-blocked{border-color:#deb3a4;background:#fae9e2;color:#933d2d}
 .ft-room-check-warning{border-color:#ddc99b;background:#fbf2df;color:#785a20}
 
+/* Familiar history controls and compact, human-readable feedback. */
+.ft-overhaul .ft-history{display:inline-flex;align-items:center;gap:4px}
+.ft-overhaul .ft-history button{width:36px;height:36px;padding:0;border:1px solid #d6ddd0;border-radius:8px;background:#fffefb;color:#3f5742;display:grid;place-items:center}
+.ft-overhaul .ft-history button:hover:not(:disabled){background:#eef3e8;border-color:#b9c7b1}
+.ft-overhaul .ft-history button:disabled{opacity:.32}
+.ft-overhaul .ft-history svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ft-overhaul .ft-toast{width:auto;min-width:0;max-width:min(460px,calc(100vw - 32px));padding:10px 11px;gap:9px;border-radius:10px;box-shadow:0 10px 30px #22312020;font-size:12px;line-height:1.45}
+.ft-overhaul .ft-toast-icon{display:grid;place-items:center;flex:0 0 20px;width:20px;height:20px;border-radius:50%;background:#e2ecd6;color:#557244;font-size:11px;font-weight:750}
+.ft-overhaul .ft-toast-error .ft-toast-icon{background:#f0dfc3;color:#925c2e}
+.ft-overhaul .ft-toast p{min-width:0}
+.ft-overhaul .ft-toast button{width:28px;height:28px;display:grid;place-items:center;flex:0 0 28px;margin-left:2px;padding:0;border:0;border-radius:50%;background:transparent;color:#82907c}
+.ft-overhaul .ft-toast button:hover{background:#edf1e7;color:#43563f}
+.ft-overhaul .ft-toast button svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round}
+
 @media(max-width:1050px){
   .ft-overhaul .ft-header{grid-template-columns:auto auto minmax(0,1fr);grid-template-areas:'brand rooms actions' 'identity identity identity'}
   .ft-overhaul .ft-header-actions{justify-self:end}
@@ -251,6 +268,7 @@
   .ft-overhaul .ft-room-summary{display:inline;margin:0 0 0 7px;font-size:10px}
   .ft-overhaul .ft-header-actions{gap:4px;justify-self:end}
   .ft-overhaul .ft-header-actions .ft-button{padding:7px 9px;min-height:34px}
+  .ft-overhaul .ft-history button{width:34px;height:34px}
   .ft-room-picker-trigger{height:34px;padding:0 9px}
   .ft-health-flags{max-width:100%;overflow-x:auto;padding-bottom:2px}
   .ft-health-title{position:sticky;left:0;background:#fbfcf8;padding-right:5px;z-index:1}
