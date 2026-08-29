@@ -208,10 +208,8 @@
 .ft-overhaul .ft-header>h1{grid-area:identity;order:initial;flex-basis:auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#344d3b;font-size:14px;font-weight:650}
 .ft-overhaul .ft-room-summary{font-family:'DM Sans',Arial,sans-serif;font-weight:500;color:#748270;text-transform:none}
 .ft-overhaul .ft-header-actions{grid-area:actions;order:initial;margin:0;gap:10px}
-.ft-room-picker-trigger{height:38px;display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:0 12px;border:1px solid #cfd8c9;border-radius:9px;background:#f6f8f1;color:#36533c;font-weight:650;font-size:12px;white-space:nowrap}
+.ft-room-picker-trigger{height:38px;display:inline-flex;align-items:center;justify-content:center;padding:0 14px;border:1px solid #cfd8c9;border-radius:9px;background:#f6f8f1;color:#36533c;font-weight:650;font-size:12px;white-space:nowrap}
 .ft-room-picker-trigger:hover,.ft-room-picker-trigger[aria-expanded=true]{background:#edf2e7;border-color:#aebeaa}
-.ft-room-picker-trigger>span:last-child{font-size:14px;transition:transform .16s}
-.ft-room-picker-trigger[aria-expanded=true]>span:last-child{transform:rotate(180deg)}
 .ft-room-menu{position:absolute;top:calc(100% + 8px);left:0;z-index:75;width:min(310px,calc(100vw - 24px));max-height:min(420px,calc(100vh - 96px));overflow:auto;padding:7px;background:#fffef9;border:1px solid #ccd6c5;border-radius:12px;box-shadow:0 18px 48px #2337292b}
 .ft-room-menu-group{display:grid;gap:2px}
 .ft-room-menu-samples{border-top:1px solid #e2e7dc;margin-top:7px;padding-top:7px}
@@ -224,7 +222,6 @@
 .ft-save-label{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;color:#677563}
 .ft-save-label:not(.ft-save-error)::before{content:'';width:6px;height:6px;border-radius:50%;background:#76926b;box-shadow:0 0 0 3px #e9f0e4}
 .ft-save-error{padding:5px 7px;border:0;border-radius:6px;background:#fbecdc;color:#9a5539}
-.ft-history button:focus-visible{outline:3px solid #78966d;outline-offset:2px}
 
 /* Validation reads as a single status group instead of loose fragments. */
 .ft-health-flags{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
@@ -262,8 +259,6 @@
 }
 @media(max-width:430px){
   .ft-room-menu{position:fixed;top:62px;left:12px;right:12px;width:auto;max-height:calc(100vh - 76px)}
-  .ft-overhaul .ft-header-actions .ft-button{font-size:0!important;width:34px;padding:0}
-  .ft-overhaul .ft-header-actions .ft-button>span{font-size:14px}
-  .ft-overhaul .ft-history button{width:30px;height:34px}
+  .ft-overhaul .ft-header-actions .ft-button{font-size:10px!important;padding:0 9px}
   .ft-overhaul .ft-header>h1{white-space:nowrap}
 }

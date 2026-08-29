@@ -192,11 +192,6 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
   const item = view !== 'compare' ? layout.furniture.find(o => o.id === selected) : undefined;
   const editable = view !== 'compare' && !(which === 'proposal' && (active?.kind !== 'layout' || status === 'stale'));
   const onResult = (r: CommandResult) => { if (!r.operationSucceeded) setNotice({ text: r.error?.message || 'Edit refused.', error: true }); else if (r.message) setNotice({ text: String(r.message), error: false }); };
-  const travelHistory = (forward: boolean) => {
-    abort.current?.abort(); setReview(null); setSelected(null); setSuggestions([]); setDraggedVariant(null);
-    onResult(forward ? store.redo() : store.undo());
-    if (!store.getState().proposal) setView('current');
-  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target instanceof Element ? e.target : null;
@@ -299,8 +294,7 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
       <h1>{room.name}<small className="ft-room-summary">{roomMeta}</small></h1>
       <div className="ft-header-actions">
         {saveFailed ? <button className="ft-save-label ft-save-error" onClick={exportRoom}>Not saved · Export</button> : <span className="ft-save-label">Saved locally</span>}
-        <div className="ft-history" role="group" aria-label="Edit history"><button aria-label="Undo last change" aria-keyshortcuts="Control+Z Meta+Z" disabled={!store.getHistory().canUndo || showSetup || !!review} onClick={()=>travelHistory(false)}>↶</button><button aria-label="Redo last change" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y" disabled={!store.getHistory().canRedo || showSetup || !!review} onClick={()=>travelHistory(true)}>↷</button></div>
-        <button className="ft-button ft-secondary" aria-expanded={panel === 'room'} onClick={() => togglePanel('room')}>Edit room <span aria-hidden="true">⌄</span></button>
+        <button className="ft-button ft-secondary" aria-expanded={panel === 'room'} onClick={() => togglePanel('room')}>Edit room</button>
       </div>
     </header>
     <main className="ft-stage">

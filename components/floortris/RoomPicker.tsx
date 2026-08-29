@@ -50,7 +50,7 @@ export default function RoomPicker({ currentId, currentName, savedRooms, samples
     <button ref={trigger} type="button" className="ft-room-picker-trigger" aria-haspopup="menu" aria-expanded={open} aria-controls="ft-room-menu" aria-label={`Open rooms. Current room: ${currentName}`} onClick={() => setOpen(value => !value)} onKeyDown={event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openAndFocus(event.key === 'ArrowUp'); }
     }}>
-      <span>Rooms</span><span aria-hidden="true">⌄</span>
+      <span>Rooms</span>
     </button>
     {open && <div id="ft-room-menu" className="ft-room-menu" role="menu" aria-label="Open a saved room or sample" onKeyDown={onMenuKeyDown} onBlur={event => {
       if (!event.currentTarget.contains(event.relatedTarget as Node | null) && event.relatedTarget !== trigger.current) setOpen(false);
