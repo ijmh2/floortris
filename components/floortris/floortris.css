@@ -200,3 +200,70 @@
 .ft-overhaul .ft-header{height:auto;min-height:68px;flex-wrap:wrap;row-gap:4px;padding-top:10px;padding-bottom:10px}
 .ft-overhaul .ft-header>h1{order:4;flex-basis:100%;margin:0}
 .ft-overhaul .ft-header-actions{order:3}
+
+/* Header and room navigation: one room name, one compact menu, stable actions. */
+.ft-overhaul .ft-header{display:grid;grid-template-columns:auto auto minmax(120px,1fr) auto;grid-template-areas:'brand rooms identity actions';column-gap:18px;row-gap:4px;min-height:68px;padding:10px 28px;overflow:visible}
+.ft-overhaul .ft-brand{grid-area:brand}
+.ft-overhaul .ft-room-picker{grid-area:rooms;position:relative;min-width:0}
+.ft-overhaul .ft-header>h1{grid-area:identity;order:initial;flex-basis:auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#344d3b;font-size:14px;font-weight:650}
+.ft-overhaul .ft-room-summary{font-family:'DM Sans',Arial,sans-serif;font-weight:500;color:#748270;text-transform:none}
+.ft-overhaul .ft-header-actions{grid-area:actions;order:initial;margin:0;gap:10px}
+.ft-room-picker-trigger{height:38px;display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:0 12px;border:1px solid #cfd8c9;border-radius:9px;background:#f6f8f1;color:#36533c;font-weight:650;font-size:12px;white-space:nowrap}
+.ft-room-picker-trigger:hover,.ft-room-picker-trigger[aria-expanded=true]{background:#edf2e7;border-color:#aebeaa}
+.ft-room-picker-trigger>span:last-child{font-size:14px;transition:transform .16s}
+.ft-room-picker-trigger[aria-expanded=true]>span:last-child{transform:rotate(180deg)}
+.ft-room-menu{position:absolute;top:calc(100% + 8px);left:0;z-index:75;width:min(310px,calc(100vw - 24px));max-height:min(420px,calc(100vh - 96px));overflow:auto;padding:7px;background:#fffef9;border:1px solid #ccd6c5;border-radius:12px;box-shadow:0 18px 48px #2337292b}
+.ft-room-menu-group{display:grid;gap:2px}
+.ft-room-menu-samples{border-top:1px solid #e2e7dc;margin-top:7px;padding-top:7px}
+.ft-room-menu-heading{padding:7px 10px 5px;color:#7b8778;font-size:9px;font-weight:750;letter-spacing:.1em;text-transform:uppercase}
+.ft-room-menu button{width:100%;min-height:38px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:8px 10px;border:0;border-radius:7px;background:transparent;text-align:left;color:#36533c;font-size:12.5px}
+.ft-room-menu button>span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ft-room-menu button:hover,.ft-room-menu button:focus-visible{background:#f0f4e9}
+.ft-room-menu button[aria-checked=true]{background:#e4edde;color:#244b31;font-weight:700}
+.ft-room-menu-check{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#345940;color:#fff;font-size:11px}
+.ft-save-label{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;color:#677563}
+.ft-save-label:not(.ft-save-error)::before{content:'';width:6px;height:6px;border-radius:50%;background:#76926b;box-shadow:0 0 0 3px #e9f0e4}
+.ft-save-error{padding:5px 7px;border:0;border-radius:6px;background:#fbecdc;color:#9a5539}
+.ft-history button:focus-visible{outline:3px solid #78966d;outline-offset:2px}
+
+/* Validation reads as a single status group instead of loose fragments. */
+.ft-health-flags{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+.ft-health-title{margin-right:3px;color:#7a8775;font-size:9px;font-weight:750;letter-spacing:.09em;text-transform:uppercase;white-space:nowrap}
+.ft-health-flags button{min-height:32px;display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border:1px solid #d7dfd1;border-radius:999px;background:#f7f9f3;color:#3f6044;font-size:11px;line-height:1;white-space:nowrap}
+.ft-health-flags button small{font-size:9px;color:inherit;opacity:.72;text-transform:capitalize}
+.ft-health-flags button:hover{border-color:#aebda8;background:#eef3e8}
+.ft-health-flags .ft-health-blocked{border-color:#e2b9aa;background:#fae9e3;color:#963f2e}
+.ft-health-flags .ft-health-missing{border-color:#dec895;background:#fbf1d9;color:#805d18}
+.ft-3d-guidance{min-width:240px;display:flex;align-items:center;gap:12px;color:#52654f}
+.ft-3d-guidance>span{display:grid;gap:1px}
+.ft-3d-guidance strong{font-size:12px;color:#334f38}
+.ft-3d-guidance small{font-size:10px;color:#71806d}
+.ft-3d-guidance button{border:0;border-bottom:1px solid #9dad99;background:transparent;padding:4px 0;color:#365d3e;font-size:11px;font-weight:650;white-space:nowrap}
+.ft-room-check{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #d2dccb;border-radius:999px;background:#f3f6ee;color:#3b5c40;font-size:10px}
+.ft-room-check strong{font-size:10px}
+.ft-room-check-blocked{border-color:#deb3a4;background:#fae9e2;color:#933d2d}
+.ft-room-check-warning{border-color:#ddc99b;background:#fbf2df;color:#785a20}
+
+@media(max-width:1050px){
+  .ft-overhaul .ft-header{grid-template-columns:auto auto minmax(0,1fr);grid-template-areas:'brand rooms actions' 'identity identity identity'}
+  .ft-overhaul .ft-header-actions{justify-self:end}
+}
+@media(max-width:740px){
+  .ft-overhaul .ft-header{height:auto;min-height:60px;display:grid;grid-template-columns:auto auto minmax(0,1fr);grid-template-areas:'brand rooms actions' 'identity identity identity';padding:8px 12px;column-gap:7px}
+  .ft-overhaul .ft-header>h1{display:block;font-size:12px}
+  .ft-overhaul .ft-room-summary{display:inline;margin:0 0 0 7px;font-size:10px}
+  .ft-overhaul .ft-header-actions{gap:4px;justify-self:end}
+  .ft-overhaul .ft-header-actions .ft-button{padding:7px 9px;min-height:34px}
+  .ft-room-picker-trigger{height:34px;padding:0 9px}
+  .ft-health-flags{max-width:100%;overflow-x:auto;padding-bottom:2px}
+  .ft-health-title{position:sticky;left:0;background:#fbfcf8;padding-right:5px;z-index:1}
+  .ft-overlay-toolbar{align-items:flex-start}
+  .ft-3d-guidance{width:100%;justify-content:space-between}
+}
+@media(max-width:430px){
+  .ft-room-menu{position:fixed;top:62px;left:12px;right:12px;width:auto;max-height:calc(100vh - 76px)}
+  .ft-overhaul .ft-header-actions .ft-button{font-size:0!important;width:34px;padding:0}
+  .ft-overhaul .ft-header-actions .ft-button>span{font-size:14px}
+  .ft-overhaul .ft-history button{width:30px;height:34px}
+  .ft-overhaul .ft-header>h1{white-space:nowrap}
+}
