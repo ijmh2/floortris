@@ -1,6 +1,6 @@
 # Studio 01 finishes
 
-Generated colour textures live in public/textures. PALETTES in data.ts is the shared catalogue for human controls and native tools; existing colour IDs remain valid. Each new entry has a stable ID, description, tags, conceptOnly flag, local texture URL and physical repeat size.
+Generated colour textures live in public/textures. PALETTES in data.ts is the shared catalogue for human controls and native tools; existing colour IDs remain valid. Each new entry has a stable ID, description, tags, conceptOnly flag, local texture URL and physical repeat size. See [asset and IP provenance](asset-provenance.md) for the generation record and release constraints.
 
 Humans: Room → Walls / Floor. Named thumbnails support keyboard focus, selected state and disabled editing. Wallpaper previews in 3D; floors also show in the 2D furniture view. Rule overlays never use textured backgrounds.
 

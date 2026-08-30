@@ -1,4 +1,4 @@
-import { faces, key, opposite, type ActivityZone, type Rotation, type BriefRequirement, type Cell, type Door, type Furniture, type GridCell, type Issue, type Layout, type Opening, type Rect, type Report, type Room, type Rules, type Wall } from './model.ts';
+import { faces, key, opposite, rotations, type ActivityZone, type Rotation, type BriefRequirement, type Cell, type Door, type Furniture, type GridCell, type Issue, type Layout, type Opening, type Rect, type Report, type Room, type Rules, type Wall } from './model.ts';
 
 export const isSolid = (o: Furniture) => o.kind !== 'rug' && o.kind !== 'tv';
 export function bounds(o: Furniture, cellCm = 20): Rect {
@@ -20,6 +20,47 @@ export function frontBand(o: Furniture, depth: number, cellCm = 20): Rect {
     case 'west': return { x: b.x - depth, y: b.y, w: depth, d: b.d };
     case 'east': return { x: b.x + b.w, y: b.y, w: depth, d: b.d };
   }
+}
+const WALLS: Wall[] = ['north', 'east', 'south', 'west'];
+export const COFFEE_TABLE_GAP_MIN_CM = 40;
+export const COFFEE_TABLE_GAP_MAX_CM = 60;
+export function rotateWall(wall: Wall, rotation: Rotation): Wall { return WALLS[(WALLS.indexOf(wall) + rotation / 90) % 4]; }
+export function furnitureBackWall(o: Furniture): Wall { return rotateWall(o.backEdge || 'north', o.rotation); }
+export function wallGaps(o: Furniture, room: Room, cellCm = 20): Record<Wall, number> {
+  const b = bounds(o, cellCm);
+  return { west: b.x, east: room.widthCm - (b.x + b.w), north: b.y, south: room.depthCm - (b.y + b.d) };
+}
+export function wantsWallBacking(o: Furniture, cellCm = 20): boolean {
+  if (o.tags.includes('bedside')) return false;
+  if (o.tags.includes('wall-backed') || o.kind === 'bed' || o.tags.includes('wardrobe')) return true;
+  const b = bounds(o, cellCm);
+  return o.kind === 'storage' && b.w * b.d / 10000 >= 0.35;
+}
+export type SofaTableRelation = { inFront: boolean; lateralOverlap: boolean; gapCm: number; offsetCm: number; validFrontageExemption: boolean };
+export function sofaTableRelation(sofa: Furniture, table: Furniture, cellCm = 20): SofaTableRelation {
+  const s = bounds(sofa, cellCm), t = bounds(table, cellCm), face = faces[sofa.rotation], across = face === 'north' || face === 'south';
+  const lateralOverlap = across ? t.x < s.x + s.w && t.x + t.w > s.x : t.y < s.y + s.d && t.y + t.d > s.y;
+  const offsetCm = across ? Math.abs((t.x + t.w / 2) - (s.x + s.w / 2)) : Math.abs((t.y + t.d / 2) - (s.y + s.d / 2));
+  const inFront = face === 'north' ? t.y + t.d <= s.y : face === 'south' ? t.y >= s.y + s.d : face === 'west' ? t.x + t.w <= s.x : t.x >= s.x + s.w;
+  const gapCm = face === 'north' ? s.y - (t.y + t.d) : face === 'south' ? t.y - (s.y + s.d) : face === 'west' ? s.x - (t.x + t.w) : t.x - (s.x + s.w);
+  return { inFront, lateralOverlap, gapCm, offsetCm, validFrontageExemption: inFront && lateralOverlap && gapCm >= COFFEE_TABLE_GAP_MIN_CM && gapCm <= COFFEE_TABLE_GAP_MAX_CM };
+}
+function overlaps(a: Rect, b: Rect): boolean { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.d && a.y + a.d > b.y; }
+function openDoorLeafRect(room: Room, door: Door): Rect | null {
+  if (door.mechanism !== 'hinged' || door.swing !== 'in') return null;
+  const hinge = door.offsetCm + (door.hinge === 'end' ? door.widthCm : 0), t = 0.5;
+  if (door.wall === 'north') return { x: hinge - t, y: 0, w: t * 2, d: door.widthCm };
+  if (door.wall === 'south') return { x: hinge - t, y: room.depthCm - door.widthCm, w: t * 2, d: door.widthCm };
+  if (door.wall === 'west') return { x: 0, y: hinge - t, w: door.widthCm, d: t * 2 };
+  return { x: room.widthCm - door.widthCm, y: hinge - t, w: door.widthCm, d: t * 2 };
+}
+function wallAttachmentProjection(room: Room, item: Furniture): Rect | null {
+  if (!item.wallAnchor) return null;
+  const { wall, offsetCm } = item.wallAnchor, depth = Math.max(0.5, item.sizeCm.d);
+  if (wall === 'north') return { x: offsetCm, y: 0, w: item.sizeCm.w, d: depth };
+  if (wall === 'south') return { x: offsetCm, y: room.depthCm - depth, w: item.sizeCm.w, d: depth };
+  if (wall === 'west') return { x: 0, y: offsetCm, w: depth, d: item.sizeCm.w };
+  return { x: room.widthCm - depth, y: offsetCm, w: depth, d: item.sizeCm.w };
 }
 /**
  * `faces` describes the front/foot of an item (rotation 0 is south), so a bed
@@ -122,6 +163,7 @@ function largestEmptyRectangle(columns: number, rows: number, blocked: Set<strin
 }
 export function validate(layout: Layout, room: Room, rules: Rules, inventory: Furniture[] = [], includeFixes = true): Report {
   const unit = rules.cellCm, columns = Math.ceil(room.widthCm / unit), rows = Math.ceil(room.depthCm / unit);
+  const checkedRules = ['physical_fit', 'solid_overlap', 'door_sweep', 'door_leaf_wall_attachments', 'windows', 'radiator', 'fixture_approaches', 'sofa_table_relationship', 'bed_side_access', 'desk_chair_relationship', 'storage_use_zones', 'wall_backing', 'orthogonal_hard_path', 'preferred_path', 'full_tv_strip', 'ceiling', 'owned_locks', 'required_brief'];
   const cells: GridCell[] = Array.from({ length: rows * columns }, (_, i) => ({ x: i % columns, y: Math.floor(i / columns), heightClass: 'FREE', objectIds: [], flags: [] }));
   const lookup = new Map(cells.map(c => [key(c), c]));
   const issues: Issue[] = [], zones: ActivityZone[] = [];
@@ -132,6 +174,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   const occupants = (at: Cell[], exempt: string[] = []) => [...new Set(at.flatMap(c => lookup.get(key(c))?.objectIds || []).filter(id => !exempt.includes(id)))];
   for (const o of all) {
     const b = bounds(o, unit), at = masks.get(o.id)!;
+    if (o.kind !== 'tv' && (b.w <= 0 || b.d <= 0)) issue('footprint_invalid', `${o.label} has no measurable footprint, so no clearance or route rule can see it. Give it a positive width and depth.`, [o.id]);
     if (o.kind !== 'tv' && (b.x < 0 || b.y < 0 || b.x + b.w > room.widthCm || b.y + b.d > room.depthCm)) issue('out_of_room', `${o.label} extends past the room. Move it inside the boundary.`, [o.id], at.filter(c => !lookup.has(key(c))));
     if (o.sizeCm.h !== null && o.elevationCm + o.sizeCm.h > rules.ceilingCm) issue('ceiling_collision', `${o.label} is above the ${rules.ceilingCm} cm ceiling. Check the measured height or mount.`, [o.id]);
     if (!isSolid(o)) continue;
@@ -151,6 +194,15 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       if (opening.mechanism !== 'hinged') issue('unsupported_opening', `${opening.id}: ${opening.mechanism} doors are not modelled. Choose a supported hinged fixture or revise this room outside V1.`, [opening.id]);
       flag(reserve, 'door_swing_reserved'); flag(leaf, 'door_leaf_blocked'); leaf.forEach(c => blocked.add(key(c)));
       const ids = occupants(reserve); if (ids.length) issue('door_swing_obstructed', 'Furniture occupies the reserved door sweep or out-swing approach. Move it clear of the hatched area.', [opening.id, ...ids], reserve.filter(c => occupants([c]).length > 0), 'block', ['door_swing_reserved']);
+      // TVs have no floor mask, so a 90-degree leaf can otherwise finish along
+      // an adjacent wall and pass through the screen while Door still reads
+      // clear. Check the continuous leaf plane against the screen projection.
+      const leafRect = openDoorLeafRect(room, opening);
+      if (leafRect) for (const tv of layout.furniture.filter(o => o.kind === 'tv' && o.wallAnchor && o.wallAnchor.wall !== opening.wall)) {
+        const projection = wallAttachmentProjection(room, tv);
+        const verticalOverlap = tv.elevationCm < rules.ceilingCm && (tv.sizeCm.h === null || tv.elevationCm + tv.sizeCm.h > 0);
+        if (projection && verticalOverlap && overlaps(leafRect, projection)) issue('door_leaf_wall_attachment', `The open leaf of ${opening.id} reaches the ${tv.wallAnchor!.wall}-wall TV. Move the TV or revise the confirmed door pose.`, [opening.id, tv.id], rectCells(leafRect, unit).filter(c => lookup.has(key(c))), 'block', ['door_leaf_blocked']);
+      }
     } else {
       flag(reserve, 'window_envelope');
       const envelopeIds = occupants(reserve); if (envelopeIds.length) issue('window_envelope_blocked', 'Furniture occupies the conservative side-hinge window envelope.', [opening.id, ...envelopeIds], reserve, 'block', ['window_envelope']);
@@ -165,6 +217,22 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     const reserve = wall === 'east' ? { x: b.x - rules.radiatorFrontCm, y: b.y, w: rules.radiatorFrontCm, d: b.d } : wall === 'west' ? { x: b.x + b.w, y: b.y, w: rules.radiatorFrontCm, d: b.d } : wall === 'north' ? { x: b.x, y: b.y + b.d, w: b.w, d: rules.radiatorFrontCm } : { x: b.x, y: b.y - rules.radiatorFrontCm, w: b.w, d: rules.radiatorFrontCm };
     const at = rectCells(reserve, unit); flag(at, 'radiator_keepout'); const ids = occupants(at, [o.id]); if (ids.length) issue('radiator_keepout', `Keep ${rules.radiatorFrontCm} cm in front of the radiator clear. This is a demo assumption, not equipment safety guidance.`, [o.id, ...ids], at, 'block', ['radiator_keepout']);
   }
+  // A wall anchor is checked against the room when it is set, and the room can
+  // change afterwards: widening it leaves a wall fixture standing in open floor
+  // with its keep-out band measured against empty air. Re-check the invariant
+  // rather than trusting the record that set it.
+  for (const f of room.fixtures.filter(f => f.wallAnchor)) {
+    const b = bounds(f, unit), wall = f.wallAnchor!.wall;
+    const gap = wall === 'west' ? b.x : wall === 'east' ? room.widthCm - (b.x + b.w) : wall === 'north' ? b.y : room.depthCm - (b.y + b.d);
+    if (gap > 1) issue('fixture_anchor_detached', `${f.label} is anchored to the ${wall} wall but stands ${Math.round(gap)} cm off it, so its clearance is measured in the wrong place. Reselect its wall in room inputs.`, [f.id], rectCells(b, unit).filter(c => lookup.has(key(c))), 'warning');
+  }
+  // A rule keyed to a rule constant can be switched off outright by a legal
+  // setConstraints value. That remains the human's choice, but it must not be
+  // silent: an empty report would otherwise read as a clean room.
+  const switchedOff = (message: string, ids: string[]) => issue('rule_disabled_by_constraint', message, ids, [], 'info');
+  if (rules.H_lowCm >= rules.ceilingCm && layout.furniture.some(o => o.kind === 'tv')) switchedOff(`No known-height object can count as tall while H_lowCm (${rules.H_lowCm} cm) is at or above the ${rules.ceilingCm} cm ceiling, so the TV sightline cannot report a known-height obstruction. Unknown heights still fail closed.`, layout.furniture.filter(o => o.kind === 'tv').map(o => o.id));
+  if (rules.radiatorFrontCm <= 0 && room.fixtures.some(f => f.kind === 'radiator')) switchedOff('The radiator keep-out depth is 0 cm, so furniture in front of a radiator can never be reported.', room.fixtures.filter(f => f.kind === 'radiator').map(f => f.id));
+  if (rules.windowFrontCm <= 0 && room.openings.some(o => o.kind === 'window')) switchedOff('The window-front depth is 0 cm, so the sill-height check can never report anything.', room.openings.filter(o => o.kind === 'window').map(o => o.id));
   const hardSize = Math.ceil(rules.walkHardCm / unit), preferredSize = Math.ceil(rules.walkPreferredCm / unit);
   const hard = footprintPass(columns, rows, blocked, hardSize, room, doors, unit);
   const preferred = preferredSize === hardSize ? hard : footprintPass(columns, rows, blocked, preferredSize, room, doors, unit);
@@ -181,16 +249,27 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     // The measured concept bands may be narrower than the rasterised hard
     // footprint. Their reachable state therefore permits edge contact, but the
     // fixture itself remains solid and never becomes walk-through space.
-    addZone(`fixture:${fixture.id}`, fixture.id, fixture.clearance!.label, rect, true, 'fixed_fixture_approach');
-    if (!zones.at(-1)!.reachable) issue('fixture_clearance_unreachable', `${fixture.label} concept approach is not reachable from the entrance.`, [fixture.id], at, 'block', ['fixture_clearance_unreachable']);
+    addZone(`fixture:${fixture.id}`, fixture.id, fixture.clearance!.label, rect, true, 'fixed_fixture_approach', false);
+    if (!ids.length && !zones.at(-1)!.reachable) issue('fixture_clearance_unreachable', `${fixture.label} concept approach is not reachable from the entrance.`, [fixture.id], at, 'block', ['fixture_clearance_unreachable']);
   }
   for (const door of doors) addZone(`approach:${door.id}`, door.id, door.entrance ? 'Entrance' : 'Door approach', wallBand({ ...room, widthCm: Math.floor(room.widthCm / unit) * unit, depthCm: Math.floor(room.depthCm / unit) * unit }, door.wall, door.offsetCm, door.widthCm, hardSize * unit));
   for (const o of layout.furniture) {
+    if (o.linkedDeskId && !layout.furniture.some(d => d.id === o.linkedDeskId && d.kind === 'desk')) issue('link_dangling', `${o.label} is still linked to a desk that is no longer in this layout. Relink it or clear the link.`, [o.id], [], 'warning');
     if (o.kind === 'sofa') {
       const target = frontBand(o, hardSize * unit, unit), face = faces[o.rotation];
       if (face === 'south') target.y = Math.ceil(target.y / unit) * unit;
       if (face === 'east') target.x = Math.ceil(target.x / unit) * unit;
       addZone(`sofa:${o.id}`, o.id, `${o.label} front`, target);
+      // The zone above only proves the seat can be REACHED. It says nothing
+      // about a piece parked in the frontage itself, which is how a low cabinet
+      // slipped through: it leaves a route around itself and, being under
+      // H_lowCm, clears the TV strip too. A coffee table belongs in front of a
+      // sofa; a cabinet does not.
+      const seat = rectCells(target, unit);
+      // Movable pieces only: a radiator or other fixed fixture clipping the band
+      // is part of the room, and already has its own keep-out rule.
+      const parked = occupants(seat, [o.id]).filter(id => { const f = layout.furniture.find(x => x.id === id); return !!f && !(f.kind === 'coffee_table' && sofaTableRelation(o, f, unit).validFrontageExemption); });
+      if (parked.length) issue('sofa_front_blocked', `${o.label} needs its ${rules.walkHardCm} cm seat frontage clear. Only a coffee table placed ${COFFEE_TABLE_GAP_MIN_CM}–${COFFEE_TABLE_GAP_MAX_CM} cm in front may occupy part of it.`, [o.id, ...parked], seat);
     }
     if (o.kind === 'desk' || o.kind === 'storage') {
       const depth = o.kind === 'desk' ? rules.chairPullCm : rules.storageFrontCm, rect = frontBand(o, depth, unit), at = rectCells(rect, unit);
@@ -204,7 +283,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       }
       if (faces[o.rotation] === 'south') target.y = Math.ceil(target.y / unit) * unit;
       if (faces[o.rotation] === 'east') target.x = Math.ceil(target.x / unit) * unit;
-      addZone(`${o.kind}:${o.id}`, o.id, `${o.label} ${o.kind === 'desk' ? 'chair approach' : 'front'}`, target, o.tags.includes('bedside'));
+      addZone(`${o.kind}:${o.id}`, o.id, `${o.label} ${o.kind === 'desk' ? 'chair approach' : 'front'}`, target, o.kind === 'storage');
       if (o.tags.includes('bedside')) {
         const b = bounds(o, unit), beds = layout.furniture.filter(f => f.kind === 'bed');
         const nearHead = beds.some(bed => bedAccessBands(bed, Math.max(depth, b.w, b.d), 60, unit).some(({ headExcluded: h }) => b.x < h.x + h.w && b.x + b.w > h.x && b.y < h.y + h.d && b.y + b.d > h.y));
@@ -225,7 +304,8 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       // Keep both candidate bands in the report. Invalid/occupied bands render
       // as red unreachable chips instead of vanishing from the room review.
       bands.forEach(({ side, rect }) => addZone(`bed:${o.id}:${side}`, o.id, `${o.label} ${side} entry`, rect, true, 'bed_side_entry', false));
-      const reachable = zones.filter(z => z.objectId === o.id && z.purpose === 'bed_side_entry' && z.reachable);
+      const validSides = new Set(valid.map(v => v.side));
+      const reachable = zones.filter(z => z.objectId === o.id && z.purpose === 'bed_side_entry' && z.reachable && validSides.has(z.id.endsWith(':left') ? 'left' : 'right'));
       if (!valid.length) issue('bed_access_blocked', `Keep a 100 cm entry segment on one long bed side at ${depth} cm depth. A maximum 60 cm head-end bedside segment is excluded.`, [o.id], bands.flatMap(r => rectCells(r.rect, unit)), 'block', ['bed_long_side_blocked']);
       else if (!reachable.length) { flag(valid.flatMap(v => rectCells(v.rect, unit)), 'bed_long_side_unreachable'); issue('path_broken', `The bed-side entry exists, but no ${rules.walkHardCm} cm walking footprint reaches it.`, [o.id], [], 'block', ['bed_long_side_unreachable']); }
       else { flag(reachable.flatMap(z => z.cells), 'bed_long_side_clear'); if (reachable.length < 2) issue('prefer_bed_two_sides', 'A second reachable bed side is preferred when the room permits it.', [o.id], [], 'warning', ['bed_long_side_blocked']); }
@@ -271,9 +351,19 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     if (profile.storage) requirements.push({ key: 'wardrobe', label: 'wardrobe', quantity: 1, met: layout.furniture.filter(o => o.tags.includes('wardrobe') || o.tags.includes('clothes-storage')).length, source: 'layout', required: true });
   }
   if (profile.kind === 'home_office' || (profile.kind === 'bedroom' && profile.workspace)) {
-    const linked = layout.furniture.filter(o => o.kind === 'desk' && layout.furniture.some(c => c.kind === 'chair' && c.linkedDeskId === o.id));
-    requirements.push({ key: 'desk-chair-link', label: 'desk with linked chair', quantity: 1, met: linked.length ? 1 : 0, source: 'relationship', required: true });
-    if (!linked.length) issue('desk_chair_missing', 'Each required desk needs a chair linked to that desk.', layout.furniture.filter(o => o.kind === 'desk' || o.kind === 'chair').map(o => o.id));
+    const desks = layout.furniture.filter(o => o.kind === 'desk');
+    const linked = desks.filter(d => layout.furniture.some(c => c.kind === 'chair' && c.linkedDeskId === d.id));
+    const relationshipQuantity = Math.max(1, desks.length);
+    requirements.push({ key: 'desk-chair-link', label: 'desk with linked chair', quantity: relationshipQuantity, met: linked.length, source: 'relationship', required: true });
+    if (linked.length < relationshipQuantity) {
+      const desk = desks.find(d => !linked.some(l => l.id === d.id));
+      const unlinkedChair = layout.furniture.find(o => o.kind === 'chair' && !o.linkedDeskId);
+      const fix = desk && unlinkedChair
+        ? { tool: 'findPlacements', args: { objectId: unlinkedChair.id, linkedDeskId: desk.id, limit: 1 }, summary: 'Find a checked position that links this chair to the desk.' }
+        : desk ? { tool: 'findPlacements', args: { variantId: 'nest-chair-60', linkedDeskId: desk.id, limit: 1 }, summary: 'Find a checked chair placement for this desk, then place that candidate.' }
+          : undefined;
+      issue('desk_chair_missing', desks.length ? 'Each desk needs its own linked work chair.' : 'This workspace needs a desk and a linked work chair.', layout.furniture.filter(o => o.kind === 'desk' || o.kind === 'chair').map(o => o.id), [], 'block', [], fix);
+    }
   }
   if (profile.kind === 'home_office') {
     if (profile.seating) requirements.push({ key: 'guest-chair', label: 'guest chair', quantity: 1, met: layout.furniture.filter(o => o.kind === 'chair' && !o.linkedDeskId).length, source: 'layout', required: false });
@@ -288,7 +378,12 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   // associated sofa facing away from its TV is.
   // ---------------------------------------------------------------------
   const ROT_FOR: Record<Wall, Rotation> = { south: 0, west: 90, north: 180, east: 270 };
-  const gapsOf = (o: Furniture) => { const b = bounds(o, unit); return { west: b.x, east: room.widthCm - (b.x + b.w), north: b.y, south: room.depthCm - (b.y + b.d) }; };
+  // A metre is about the point at which a blank wall stops being an outlook and
+  // starts being a mistake, and a further metre behind the sofa proves a better
+  // direction was available. Literal centimetres on purpose: keying either
+  // distance to a rule constant would let setConstraints turn a preference into
+  // noise across every lounge.
+  const SOFA_OUTLOOK_CM = 100;
   const towards = (from: Furniture, to: Furniture): Wall => {
     const a = bounds(from, unit), t = bounds(to, unit);
     const dx = (t.x + t.w / 2) - (a.x + a.w / 2), dy = (t.y + t.d / 2) - (a.y + a.d / 2);
@@ -312,16 +407,22 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       : { tool: 'findPlacements', args: { objectId: o.id }, summary: `${summary} — needs a checked placement` };
   };
   const turnFix = (o: Furniture, wall: Wall, summary: string) => ({ tool: 'updateFurniture', args: { objectId: o.id, rotation: ROT_FOR[wall] }, summary });
+  const backToWallFix = (o: Furniture, wall: Wall, summary: string) => {
+    const rotation = rotations.find(r => furnitureBackWall({ ...o, rotation: r }) === wall)!;
+    return { tool: 'updateFurniture', args: { objectId: o.id, rotation }, summary };
+  };
 
   for (const o of layout.furniture) {
-    const b = bounds(o, unit), g = gapsOf(o), back = opposite[faces[o.rotation]];
-    const isWardrobe = o.tags.includes('wardrobe'), isBedside = o.tags.includes('bedside');
+    const b = bounds(o, unit), g = wallGaps(o, room, unit), back = furnitureBackWall(o);
+    const isBedside = o.tags.includes('bedside');
 
     // A linked chair must face the desk it belongs to.
     if (o.kind === 'chair' && o.linkedDeskId) {
       const desk = layout.furniture.find(d => d.id === o.linkedDeskId);
       if (desk) {
         const want = towards(o, desk);
+        const pull = frontBand(desk, rules.chairPullCm, unit);
+        if (!overlaps(b, pull)) issue('chair_desk_distance', `${o.label} is linked to ${desk.label} but does not occupy its ${rules.chairPullCm} cm chair-pull zone. Move the chair to the desk.`, [o.id, desk.id], rectCells(pull, unit), 'block', ['chair_pull_blocked'], { tool: 'findPlacements', args: { objectId: o.id, linkedDeskId: desk.id }, summary: 'Search for a checked position in the desk pull zone' });
         if (faces[o.rotation] !== want) issue('chair_facing_wrong', `${o.label} is linked to ${desk.label} but faces ${faces[o.rotation]}. Turn it to face ${want}.`, [o.id, desk.id], [], 'block', [], turnFix(o, want, `Rotate to face ${want}`));
         const db = bounds(desk, unit), across = want === 'north' || want === 'south';
         const off = across ? Math.abs((b.x + b.w / 2) - (db.x + db.w / 2)) : Math.abs((b.y + b.d / 2) - (db.y + db.d / 2));
@@ -330,13 +431,28 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       }
     }
 
+    // A sofa looking at a near blank wall with the room behind it is turned the
+    // wrong way round. The ordinary lounge is the opposite case — backed to a
+    // wall, looking across the floor at a rug — and stays quiet, as does a
+    // deliberate outlook: an opening or a TV on the wall it faces. Anything
+    // closer than the hard walking width already fails as path_broken.
+    if (o.kind === 'sofa') {
+      const front = faces[o.rotation], horizontal = front === 'north' || front === 'south';
+      const start = horizontal ? b.x : b.y, end = horizontal ? b.x + b.w : b.y + b.d;
+      const spans = (offset: number, width: number) => offset < end && offset + width > start;
+      const outlook = room.openings.some(w => w.wall === front && spans(w.offsetCm, w.widthCm))
+        || layout.furniture.some(t => t.kind === 'tv' && t.wallAnchor?.wall === front && spans(t.wallAnchor.offsetCm, t.sizeCm.w));
+      if (!outlook && g[front] >= 0 && g[front] <= SOFA_OUTLOOK_CM && g[back] - g[front] >= SOFA_OUTLOOK_CM) issue('prefer_sofa_into_room', `${o.label} looks at a blank ${front} wall ${Math.round(g[front])} cm away, with ${Math.round(g[back])} cm of room behind it. Turn it to face into the room.`, [o.id], [], 'warning', [], turnFix(o, back, `Turn it to face the ${back} side of the room`));
+    }
+
     // Storage, wardrobes and beds have a back that belongs against something.
-    const footprintM2 = b.w * b.d / 10000;
-    if ((o.kind === 'storage' || o.kind === 'bed' || isWardrobe) && !isBedside && footprintM2 >= 0.35) {
+    if (wantsWallBacking(o, unit)) {
       if (g[back] > 5) {
-        const touching = (Object.keys(g) as Wall[]).find(w => g[w] <= 5);
-        const label = o.kind === 'bed' ? 'headboard' : 'back';
-        issue(o.kind === 'bed' ? 'bed_head_wall' : 'prefer_wall_backing', `The ${label} of ${o.label} is ${Math.round(g[back])} cm from any wall, so it stands free in the room.`, [o.id], [], 'warning', [], touching ? turnFix(o, opposite[touching], `Turn its ${label} to the ${touching} wall`) : { tool: 'findPlacements', args: { objectId: o.id }, summary: 'Search for a wall-backed placement' });
+        const touching = WALLS.find(w => w !== back && g[w] <= 5);
+        const label = o.kind === 'bed' && (o.backEdge || 'north') === 'north' ? 'headboard' : 'back';
+        const code = o.kind === 'bed' ? 'bed_head_wall' : touching ? 'side_against_wall' : 'prefer_wall_backing';
+        const message = touching ? `Only the side of ${o.label} touches the ${touching} wall; its ${label} faces ${back}. Turn its ${label} to the wall.` : `The ${label} of ${o.label} is ${Math.round(g[back])} cm from the ${back} wall, so it stands free in the room.`;
+        issue(code, message, [o.id], [], 'warning', [], touching ? backToWallFix(o, touching, `Turn its ${label} to the ${touching} wall`) : { tool: 'findPlacements', args: { objectId: o.id }, summary: 'Search for a wall-backed placement' });
       }
     }
 
@@ -365,14 +481,24 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       if (anchors.length && !overlaps) issue('rug_under_group', `${o.label} does not sit under the seating or bed.`, [o.id, ...anchors.map(a => a.id)], [], 'info', [], { tool: 'findPlacements', args: { objectId: o.id }, summary: 'Search for a placement under the group' });
     }
 
-    // A coffee table belongs centred in front of the sofa, within reach.
+    // A coffee table belongs centred in the sofa's facing half-plane, with a
+    // usable hand/leg gap. Only this relationship earns the frontage exemption.
     if (o.kind === 'coffee_table') {
-      const sofa = layout.furniture.find(f => f.kind === 'sofa');
+      const related = layout.furniture.filter(f => f.kind === 'sofa').map(sofa => ({ sofa, relation: sofaTableRelation(sofa, o, unit) })).sort((a, c) => Number(c.relation.inFront && c.relation.lateralOverlap) - Number(a.relation.inFront && a.relation.lateralOverlap) || Math.abs(a.relation.gapCm - 50) - Math.abs(c.relation.gapCm - 50))[0];
+      const sofa = related?.sofa;
       if (sofa) {
-        const sb = bounds(sofa, unit), face = faces[sofa.rotation], across = face === 'north' || face === 'south';
-        const off = across ? Math.abs((b.x + b.w / 2) - (sb.x + sb.w / 2)) : Math.abs((b.y + b.d / 2) - (sb.y + sb.d / 2));
-        if (off > (across ? sb.w : sb.d) / 3) issue('table_centred_on_sofa', `${o.label} is ${Math.round(off)} cm off the centre of ${sofa.label}.`, [o.id, sofa.id], [], 'warning', [], moveFix(o, across ? sb.x + sb.w / 2 - b.w / 2 : b.x, across ? b.y : sb.y + sb.d / 2 - b.d / 2, 'Centre it on the sofa'));
+        const sb = bounds(sofa, unit), face = faces[sofa.rotation], across = face === 'north' || face === 'south', relation = related.relation;
+        if (!relation.inFront || !relation.lateralOverlap) issue('coffee_table_position', `${o.label} is not in front of ${sofa.label}. Place it in the sofa's ${face} facing half-plane.`, [o.id, sofa.id], [], 'warning', [], { tool: 'findPlacements', args: { objectId: o.id }, summary: 'Search for a checked placement in front of the sofa' });
+        else if (relation.gapCm < COFFEE_TABLE_GAP_MIN_CM || relation.gapCm > COFFEE_TABLE_GAP_MAX_CM) issue('coffee_table_gap', `${o.label} is ${Math.round(relation.gapCm)} cm from ${sofa.label}; keep a ${COFFEE_TABLE_GAP_MIN_CM}–${COFFEE_TABLE_GAP_MAX_CM} cm edge gap.`, [o.id, sofa.id], [], 'warning', [], { tool: 'findPlacements', args: { objectId: o.id }, summary: 'Search for a checked sofa-table gap' });
+        if (relation.offsetCm > (across ? sb.w : sb.d) / 3) issue('table_centred_on_sofa', `${o.label} is ${Math.round(relation.offsetCm)} cm off the centre of ${sofa.label}.`, [o.id, sofa.id], [], 'warning', [], moveFix(o, across ? sb.x + sb.w / 2 - b.w / 2 : b.x, across ? b.y : sb.y + sb.d / 2 - b.d / 2, 'Centre it on the sofa'));
       }
+    }
+
+    if (o.tags.includes('all-side-clearance')) {
+      const depth = rules.chairPullCm, outer = { x: b.x - depth, y: b.y - depth, w: b.w + depth * 2, d: b.d + depth * 2 };
+      const ring = rectCells(outer, unit).filter(c => !rectCells(b, unit).some(own => own.x === c.x && own.y === c.y));
+      const ids = occupants(ring, [o.id]), clipped = outer.x < 0 || outer.y < 0 || outer.x + outer.w > room.widthCm || outer.y + outer.d > room.depthCm;
+      if (ids.length || clipped) issue('meeting_table_clearance', `${o.label} needs ${depth} cm of chair space on every side.`, [o.id, ...ids], ring.filter(c => lookup.has(key(c))), 'warning', ['chair_pull_blocked'], { tool: 'findPlacements', args: { objectId: o.id }, summary: 'Search for all-side meeting-table clearance' });
     }
   }
 
@@ -401,11 +527,11 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       const object = layout.furniture.find(o => o.id === item.fix!.args.objectId);
       if (!object) { delete item.fix; continue; }
       const source = object.ownership === 'owned' ? inventory.find(o => o.id === object.id) : object;
-      const patch = item.fix.args as { originCell?: Cell; rotation?: Rotation };
+      const patch = item.fix.args as { originCell?: Cell; rotation?: Rotation; linkedDeskId?: string };
       if (!source || source.ownership === 'fixed'
         || (source.locked.position && patch.originCell && (patch.originCell.x !== source.originCell.x || patch.originCell.y !== source.originCell.y))
         || (source.locked.rotation && patch.rotation !== undefined && patch.rotation !== source.rotation)) { delete item.fix; continue; }
-      const placed = { ...object, ...(patch.originCell ? { originCell: patch.originCell } : {}), ...(patch.rotation !== undefined ? { rotation: patch.rotation } : {}) };
+      const placed = { ...object, ...(patch.originCell ? { originCell: patch.originCell } : {}), ...(patch.rotation !== undefined ? { rotation: patch.rotation } : {}), ...(patch.linkedDeskId !== undefined ? { linkedDeskId: patch.linkedDeskId } : {}) };
       const hypothetical = validate({ ...layout, furniture: layout.furniture.map(o => o.id === object.id ? placed : o) }, room, rules, inventory, false);
       const unresolved = hypothetical.issues.some(i => i.code === item.code && i.objectIds.includes(object.id));
       const newBlock = hypothetical.issues.some(i => i.severity === 'block' && !existingBlocks.has(signature(i)));
@@ -413,5 +539,5 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       if (unresolved || newBlock || missing) item.fix = { tool: 'findPlacements', args: { objectId: object.id }, summary: 'Search for a checked alternative; the direct repair is not safe or does not resolve this issue.' };
     }
   }
-  return { validation: { status: hardFailures ? 'blocked' : finalWarnings ? 'warnings' : 'ok', hardFailures, warnings: finalWarnings }, brief: { status: missingRequired.length ? 'incomplete' : 'satisfied', missingRequired, requirements }, issues, cells, zones, columns, rows, flagsSummary, clearances: { hardRequestedCm: rules.walkHardCm, hardEffectiveCm: hardSize * unit, preferredRequestedCm: rules.walkPreferredCm, preferredEffectiveCm: preferredSize * unit }, openFloorM2, ...(conceptualOnly ? { conceptualOnly: true } : {}) };
+  return { validation: { status: hardFailures ? 'blocked' : finalWarnings ? 'warnings' : 'ok', hardFailures, warnings: finalWarnings }, brief: { status: missingRequired.length ? 'incomplete' : 'satisfied', missingRequired, requirements }, issues, cells, zones, columns, rows, flagsSummary, checkedRules, clearances: { hardRequestedCm: rules.walkHardCm, hardEffectiveCm: hardSize * unit, preferredRequestedCm: rules.walkPreferredCm, preferredEffectiveCm: preferredSize * unit }, openFloorM2, ...(conceptualOnly ? { conceptualOnly: true } : {}) };
 }

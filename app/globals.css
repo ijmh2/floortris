@@ -4,6 +4,7 @@ body { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-s
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
+.ft-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .ft-agent-guide-page { max-width: 800px; margin: 0 auto; padding: 40px 24px 72px; color: #2f4033; line-height: 1.65; }
 .ft-agent-guide-page > h1 { line-height: 1.2; margin: 24px 0 8px; }

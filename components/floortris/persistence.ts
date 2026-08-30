@@ -13,6 +13,17 @@ export function readSavedRoom(raw: string): AppState | null {
   } catch { return null; }
 }
 
+/** Validate a user-selected export before it can enter the local room library. */
+export function readImportedRoom(raw: string): AppState | null {
+  // A room export is tiny; refuse accidental binary/huge uploads before JSON.parse.
+  if (raw.length > 1_000_000) return null;
+  const state = readSavedRoom(raw);
+  if (!state) return null;
+  // Never let an imported file overwrite a room that is already open or saved.
+  // Imported authority is refreshed again by humanOpenRoom.
+  return { ...state, documentId: `import-${crypto.randomUUID()}` };
+}
+
 type StoragePort = Pick<Storage, 'getItem' | 'setItem'>;
 export type RoomWorkspace = { version: 1; activeId: string; documents: { id: string; state: AppState }[] };
 export const documentId = (state: AppState) => state.documentId || 'original';

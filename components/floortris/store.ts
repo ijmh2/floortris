@@ -1,6 +1,6 @@
 import { CATALOGUE, DEFAULT_RULES, PALETTES, fromVariant, makeDemo } from './data.ts';
-import { bedAccessBands, bounds, frontBand, rectCells, validate } from './engine.ts';
-import { clone, faces, rotations, type AppState, type ToolLogEntry, type Candidate, type CommandResult, type Furniture, type Layout, type Proposal, type Report, type Room, type Rules } from './model.ts';
+import { COFFEE_TABLE_GAP_MIN_CM, bedAccessBands, bounds, frontBand, furnitureBackWall, rectCells, validate, wallGaps, wantsWallBacking } from './engine.ts';
+import { clone, faces, opposite, rotations, type AppState, type ToolLogEntry, type Candidate, type CommandResult, type Furniture, type Layout, type Proposal, type Report, type Room, type Rules, type Wall } from './model.ts';
 import { TOOL_SCHEMAS, validateSchema } from './schemas.ts';
 import { roomEditStamp, validateRoomInputs } from './room-inputs.ts';
 import { profileRules } from './samples.ts';
@@ -31,6 +31,8 @@ class CommandError extends Error { code: string; constructor(code: string, messa
 function fail(code: string, message: string): never { throw new CommandError(code, message); }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const issueSignature = (i: Report['issues'][number]) => `${i.code}|${[...i.objectIds].sort().join(',')}|${i.destinationId || ''}`;
+const ISSUE_COST: Record<string, number> = { side_against_wall: 240, prefer_wall_backing: 220, bed_head_wall: 220, coffee_table_position: 210, coffee_table_gap: 200, chair_desk_offset: 140, prefer_flush_to_wall: 80, meeting_table_clearance: 80, prefer_sofa_into_room: 70, walk_tight: 40, prefer_desk_window: 25, table_centred_on_sofa: 25, prefer_even_distribution: 3, prefer_open_floor: 3 };
+const issueCost = (issue: Report['issues'][number]) => issue.severity === 'block' ? 10000 : ISSUE_COST[issue.code] || (issue.severity === 'warning' ? 50 : 1);
 const pause = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 function checkRules(r: Rules) {
   if (r.walkHardCm <= 0 || r.walkPreferredCm < r.walkHardCm) fail('invalid_constraints', 'Preferred walking width must be at least the positive hard minimum.');
@@ -115,7 +117,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       // A new catalogue variant is a new role as well as new dimensions. In
       // particular, replacing a wardrobe with a bedside table must not retain
       // the wardrobe tags and satisfy the bedroom brief by accident.
-      next = { ...next, sizeCm: clone(v.sizeCm), label: v.name, tags, sleepSize };
+      next = { ...next, sizeCm: clone(v.sizeCm), label: v.name, tags, sleepSize, backEdge: v.backEdge };
     }
     if (object.ownership === 'owned') { next.sizeCm = clone(source.sizeCm); next.requiredInRoom = source.requiredInRoom; next.locked = clone(source.locked); next.tags = clone(source.tags); next.sleepSize = source.sleepSize; }
     return next;
@@ -133,7 +135,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (c.proposalId !== p.id || c.proposalRevision !== p.revision || c.ruleRevision !== state.ruleRevision) fail('revision_conflict', 'Candidate was checked against a different proposal or rule revision.');
     if ((a.objectId && c.objectId !== a.objectId) || (a.variantId && a.variantId !== c.variantId)) fail('invalid_candidate', 'Candidate does not match the requested object or variant.');
     for (const property of ['originCell', 'rotation', 'wallAnchor']) if (a[property] !== undefined && !same(a[property], (c as unknown as Record<string, unknown>)[property])) fail('invalid_candidate', 'Do not override a checked candidate placement.');
-    return { originCell: clone(c.originCell), rotation: c.rotation, ...(c.variantId ? { variantId: c.variantId } : {}), ...(c.wallAnchor ? { wallAnchor: clone(c.wallAnchor) } : {}) };
+    return { originCell: clone(c.originCell), rotation: c.rotation, ...(c.variantId ? { variantId: c.variantId } : {}), ...(c.linkedDeskId ? { linkedDeskId: c.linkedDeskId } : {}), ...(c.wallAnchor ? { wallAnchor: clone(c.wallAnchor) } : {}) };
   };
   async function search(p: Proposal, a: Args, signal?: AbortSignal, timeLimit = 1800): Promise<{ found: Candidate[]; trials: number; exhausted: boolean }> {
     const existing = a.objectId ? p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Object not found in this proposal.') : undefined;
@@ -142,9 +144,9 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (existing && a.variantId) piece = checkPatch(existing, { variantId: a.variantId }, p.layout);
     if (piece.kind === 'chair' && a.linkedDeskId) piece.linkedDeskId = a.linkedDeskId;
     if (piece.kind === 'tv' && !piece.targetSofaId) piece.targetSofaId = p.layout.furniture.find(o => o.kind === 'sofa')?.id;
-    const base = validate(p.layout, p.room, p.rules, state.inventory, false), baseBlocks = new Set(base.issues.filter(i => i.severity === 'block').map(issueSignature));
+    const base = validate(p.layout, p.room, p.rules, state.inventory, false), baseBlocks = new Set(base.issues.filter(i => i.severity === 'block').map(issueSignature)), baseIssues = new Set(base.issues.map(issueSignature));
     const found: Candidate[] = [], positions: HumanPatch[] = [], seen = new Set<string>(), started = Date.now(); let trials = 0;
-    const cols = Math.floor(p.room.widthCm / 20), rows = Math.floor(p.room.depthCm / 20);
+    const unit = p.rules.cellCm, cols = Math.floor(p.room.widthCm / unit), rows = Math.floor(p.room.depthCm / unit), requestedLimit = a.limit || 5, candidatePool = Math.min(24, Math.max(12, requestedLimit * 4));
     const locks = authoritative(piece).locked;
     if (piece.kind === 'tv') {
       const sofa = p.layout.furniture.find(o => o.id === piece.targetSofaId);
@@ -184,8 +186,29 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         const y = face === 'south' ? bb.y + bb.d + inset : face === 'north' ? bb.y - pb.d - inset : bb.y + (bb.d - pb.d) / 2;
         positions.push({ originCell: { x: Math.round(x / 20), y: Math.round(y / 20) }, rotation });
       }
-      if (piece.kind === 'coffee_table' && b) positions.push({ originCell: { x: Math.round((b.x + b.w / 2 - piece.sizeCm.w / 2) / 20), y: Math.floor((b.y - p.rules.walkHardCm - piece.sizeCm.d) / 20) }, rotation: 0 });
+      if (piece.kind === 'coffee_table' && sofa && b) {
+        const face = faces[sofa.rotation], rotation = (face === 'north' || face === 'south' ? 0 : 90) as Furniture['rotation'], pb = bounds({ ...piece, rotation }, unit);
+        const x = face === 'east' ? b.x + b.w + COFFEE_TABLE_GAP_MIN_CM : face === 'west' ? b.x - pb.w - COFFEE_TABLE_GAP_MIN_CM : b.x + (b.w - pb.w) / 2;
+        const y = face === 'south' ? b.y + b.d + COFFEE_TABLE_GAP_MIN_CM : face === 'north' ? b.y - pb.d - COFFEE_TABLE_GAP_MIN_CM : b.y + (b.d - pb.d) / 2;
+        positions.push({ originCell: { x: x / unit, y: y / unit }, rotation });
+      }
       if (piece.kind === 'rug' && b) positions.push({ originCell: { x: Math.floor((b.x + b.w / 2 - piece.sizeCm.w / 2) / 20), y: Math.floor((b.y - piece.sizeCm.d + 40) / 20) }, rotation: 0 });
+      if (wantsWallBacking(piece, unit)) {
+        const addWallPosition = (rotation: Furniture['rotation'], along: number) => {
+          const placed = { ...piece, rotation }, bb = bounds(placed, unit), back = furnitureBackWall(placed);
+          positions.push({ rotation, originCell: back === 'north' ? { x: along / unit, y: 0 } : back === 'south' ? { x: along / unit, y: (p.room.depthCm - bb.d) / unit } : back === 'west' ? { x: 0, y: along / unit } : { x: (p.room.widthCm - bb.w) / unit, y: along / unit } });
+        };
+        // Give every back-wall orientation a centred and end-aligned chance
+        // before filling the bounded pool with denser samples of the first wall.
+        for (const rotation of rotations) {
+          const bb = bounds({ ...piece, rotation }, unit), back = furnitureBackWall({ ...piece, rotation }), max = back === 'north' || back === 'south' ? p.room.widthCm - bb.w : p.room.depthCm - bb.d;
+          if (max >= 0) for (const along of [...new Set([max / 2, 0, max])]) addWallPosition(rotation, along);
+        }
+        for (const rotation of rotations) {
+          const bb = bounds({ ...piece, rotation }, unit), back = furnitureBackWall({ ...piece, rotation }), max = back === 'north' || back === 'south' ? p.room.widthCm - bb.w : p.room.depthCm - bb.d;
+          if (max >= 0) for (let along = unit * 2; along < max; along += unit * 2) addWallPosition(rotation, along);
+        }
+      }
       positions.push({ originCell: piece.originCell, rotation: piece.rotation });
       // Prioritise walls, then sample the interior. Search is bounded and deterministic.
       for (const rotation of rotations) for (let t = 0; t < Math.max(cols, rows); t += 2) {
@@ -196,7 +219,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     }
     for (const patch of positions) {
       if (signal?.aborted) fail('cancelled', 'Search cancelled without committing.');
-      if (trials >= 160 || Date.now() - started > timeLimit || found.length >= (a.limit || 5)) break;
+      if (trials >= 160 || Date.now() - started > timeLimit || found.length >= candidatePool) break;
       const signature = JSON.stringify(patch); if (seen.has(signature)) continue; seen.add(signature);
       if (locks.position && ((patch.originCell && !same(patch.originCell, authoritative(piece).originCell)) || (patch.wallAnchor && !same(patch.wallAnchor, authoritative(piece).wallAnchor)))) continue;
       if (locks.rotation && patch.rotation !== authoritative(piece).rotation) continue;
@@ -208,11 +231,19 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       const relevant = report.issues.filter(i => i.severity === 'block' && i.code !== 'desk_chair_missing' && (i.objectIds.includes(placed.id) || !baseBlocks.has(issueSignature(i))));
       const avoid = a.avoidFlags || []; const occupiedKeys = new Set(rectCells(bounds(placed)).map(c => `${c.x},${c.y}`));
       const violatesAvoid = placed.kind !== 'tv' && report.cells.some(c => occupiedKeys.has(`${c.x},${c.y}`) && c.flags.some(f => avoid.includes(f)));
-      if (!relevant.length && !violatesAvoid) { const candidateId = `candidate-${++candidateSeq}`; candidateReports.set(candidateId, report); found.push({ candidateId, proposalId: p.id, proposalRevision: p.revision, ruleRevision: state.ruleRevision, objectId: existing?.id, variantId: placed.variantId, originCell: placed.originCell, rotation: placed.rotation, wallAnchor: placed.wallAnchor, checkedRules: ['physical_fit', 'solid_overlap', 'doors', 'windows', 'radiator', 'use_zones', 'orthogonal_hard_path', 'preferred_path', 'full_tv_strip', 'ceiling', 'owned_locks', 'required_brief'], placementStatus: 'valid', layoutStatus: report.validation.status, remainingIssues: report.issues.slice(0, 10).map(i => ({ ...i, cells: i.cells.slice(0, 20), cellCount: i.cells.length, hasMoreCells: i.cells.length > 20 })), remainingIssueCount: report.issues.length, hasMoreRemainingIssues: report.issues.length > 10, details: { tool: 'checkLayout', args: { which: 'proposal', revision:p.revision, candidateId, detail:'issues', offset:0, limit:100 } }, brief: report.brief }); }
+      if (!relevant.length && !violatesAvoid) {
+        const candidateId = `candidate-${++candidateSeq}`, decisionIssues = report.issues.filter(i => i.objectIds.includes(placed.id) || !baseIssues.has(issueSignature(i))), qualityScore = decisionIssues.reduce((sum, i) => sum + issueCost(i), 0);
+        const gaps = placed.kind === 'tv' && placed.wallAnchor ? { north: Infinity, east: Infinity, south: Infinity, west: Infinity, [placed.wallAnchor.wall]: 0 } as Record<Wall, number> : wallGaps(placed, p.room, unit);
+        const backWall = placed.kind === 'tv' && placed.wallAnchor ? placed.wallAnchor.wall : furnitureBackWall(placed), touchingWalls = (Object.keys(gaps) as Wall[]).filter(w => gaps[w] <= 0.5);
+        const frontFacing = placed.kind === 'tv' && placed.wallAnchor ? opposite[placed.wallAnchor.wall] : faces[placed.rotation];
+        candidateReports.set(candidateId, report); found.push({ candidateId, proposalId: p.id, proposalRevision: p.revision, ruleRevision: state.ruleRevision, objectId: existing?.id, variantId: placed.variantId, linkedDeskId: placed.linkedDeskId, originCell: placed.originCell, rotation: placed.rotation, wallAnchor: placed.wallAnchor, checkedRules: report.checkedRules, placementStatus: 'valid', layoutStatus: report.validation.status, qualityScore, frontFacing, backWall, backGapCm: gaps[backWall], touchingWalls, remainingIssues: report.issues.slice(0, 10).map(i => ({ ...i, cells: i.cells.slice(0, 20), cellCount: i.cells.length, hasMoreCells: i.cells.length > 20 })), remainingIssueCount: report.issues.length, hasMoreRemainingIssues: report.issues.length > 10, details: { tool: 'checkLayout', args: { which: 'proposal', revision:p.revision, candidateId, detail:'issues', offset:0, limit:100 } }, brief: report.brief });
+      }
       if (trials % 8 === 0) await pause();
     }
     if (signal?.aborted) fail('cancelled', 'Search cancelled without committing.');
-    return { found, trials, exhausted: trials >= 160 || Date.now() - started > timeLimit };
+    found.sort((a, b) => a.qualityScore - b.qualityScore || a.remainingIssueCount - b.remainingIssueCount || a.originCell.y - b.originCell.y || a.originCell.x - b.originCell.x || a.rotation - b.rotation);
+    for (const candidate of found.slice(requestedLimit)) candidateReports.delete(candidate.candidateId);
+    return { found: found.slice(0, requestedLimit), trials, exhausted: trials >= 160 || Date.now() - started > timeLimit };
   }
   const snapshot = (a: Args) => {
     if (a.which === 'current') { if (a.revision !== undefined && a.revision !== state.currentRevision) fail('revision_conflict', 'Current has changed.'); return { layout: state.current, room: state.room, rules: state.rules, revision: state.currentRevision, which: 'current' }; }
@@ -227,7 +258,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       if (retryKey && retries.has(retryKey)) { const prior = retries.get(retryKey)!; if (prior.signature !== signature) fail('idempotency_conflict', 'This idempotency key was already used with different arguments.'); if (prior.result.generatedRoom && prior.result.documentId !== documentId(state)) fail('room_not_active', 'This request already created a saved room. Open it from Rooms; do not duplicate it with a new key.'); return clone({ ...prior.result, idempotentReplay: true, activeProposalRevision: state.proposal?.revision }); }
       let result: CommandResult;
       if (name === 'listCatalogue') {
-        const list = CATALOGUE.filter(v => (!a.kind || v.kind === a.kind) && (!a.profile || !v.recommendedProfiles || v.recommendedProfiles.includes(a.profile)) && (!a.tag || v.tags?.includes(a.tag))), offset = a.offset || 0, limit = a.limit || 30;
+        const list = CATALOGUE.filter(v => (!a.kind || v.kind === a.kind) && (!a.profile || !v.recommendedProfiles || v.recommendedProfiles.includes(a.profile)) && (!a.tag || v.tags?.includes(a.tag))), offset = a.offset || 0, limit = a.limit || 50;
         return { operationSucceeded: true, catalogue: clone(list.slice(offset, offset + limit)), total: list.length, offset, hasMore: offset + limit < list.length, palettes: clone(PALETTES) };
       }
       if (['getRoomState', 'listFurniture', 'checkLayout'].includes(name)) {
@@ -374,14 +405,18 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
    */
   const toolLog: ToolLogEntry[] = [];
   const getToolLog = () => toolLog;
-  /** Arguments are agent-supplied; keep only short, non-sensitive identifiers. */
+  /** Arguments are agent-supplied; keep only non-sensitive categories. */
   const summarise = (a: Args): string => {
     const parts: string[] = [];
-    for (const k of ['which', 'kind', 'objectId', 'ownedId', 'variantId', 'target', 'paletteId']) {
-      const v = a?.[k];
-      if (typeof v === 'string' && v.length <= 40) parts.push(`${k}=${v}`);
-    }
-    return parts.slice(0, 3).join(' ');
+    if (a?.which === 'current' || a?.which === 'proposal') parts.push(`view=${a.which}`);
+    if (typeof a?.kind === 'string') parts.push(`kind=${a.kind}`);
+    if (typeof a?.target === 'string') parts.push(`target=${a.target}`);
+    if (a?.candidateId) parts.push('checked candidate');
+    else if (a?.ownedId) parts.push('owned piece');
+    else if (a?.variantId) parts.push('catalogue piece');
+    else if (a?.objectId) parts.push('existing piece');
+    if (Array.isArray(a?.openings)) parts.push(`${a.openings.length} openings`);
+    return parts.slice(0, 3).join(' · ');
   };
   async function execute(name: string, a: Args, signal?: AbortSignal): Promise<CommandResult> {
     const startedAt = Date.now();
@@ -449,6 +484,18 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     guardHuman(which);
     const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Select a layout draft.'); removeFrom(layout, id, next.proposal?.omitted || []); if (which === 'current') next.currentRevision++; else next.proposal!.revision++; publish(next); return { operationSucceeded: true };
   });
+  const humanRestoreOwned = (which: 'current' | 'proposal', id: string) => human(() => {
+    guardHuman(which);
+    const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Select a layout draft.');
+    if (layout.furniture.some(o => o.id === id)) fail('duplicate_owned_instance', 'This owned piece is already in this layout.');
+    const owned = next.inventory.find(o => o.id === id) || fail('invalid_id', 'Owned inventory piece not found.');
+    if (layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 pieces.');
+    layout.furniture.push(clone(owned));
+    if (which === 'proposal') next.proposal!.omitted = next.proposal!.omitted.filter(o => o.objectId !== id);
+    if (which === 'current') next.currentRevision++; else next.proposal!.revision++;
+    publish(next);
+    return which === 'proposal' ? envelope(next.proposal!) : { operationSucceeded: true, currentRevision: state.currentRevision };
+  });
   const humanSetLocks = (id: string, locks: Furniture['locked'], which: 'current' | 'proposal' = 'current') => human(() => {
     if (which === 'proposal') {
       const p = state.proposal || fail('proposal_not_found', 'No active proposal.');
@@ -509,7 +556,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     publish(next); return which === 'proposal' ? envelope(next.proposal!) : { operationSucceeded: true, currentRevision: state.currentRevision };
   });
   const applyProposal = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'layout'), report = validate(p.layout, p.room, p.rules, state.inventory); if (report.validation.hardFailures || report.brief.status !== 'satisfied') fail('blocked_apply', 'Resolve hard failures and complete the active room brief before Apply.'); const next = clone(state); next.current = clone(p.layout); next.currentRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, currentRevision: state.currentRevision, ...(report.conceptualOnly ? { conceptualOnly: true } : {}) }; });
-  const confirmSetup = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'setup'); checkRules(p.rules); const next = clone(state); next.room = clone(p.room); next.rules = clone(p.rules); next.ruleRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, ruleRevision: state.ruleRevision, validation: validate(next.current, next.room, next.rules, next.inventory).validation }; });
+  const confirmSetup = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'setup'); const inputError = validateRoomInputs(p.room, p.rules); if (inputError) fail('invalid_room_inputs', inputError); checkRules(p.rules); const next = clone(state); next.room = clone(p.room); next.rules = clone(p.rules); next.ruleRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, ruleRevision: state.ruleRevision, validation: validate(next.current, next.room, next.rules, next.inventory).validation }; });
   const discardProposal = () => { const next = clone(state); next.proposal = null; publish(next); return { operationSucceeded: true }; };
   const humanStageRoom = (room: Room, rules: Rules, expectedStamp: string, replaceProposal = false) => human(() => {
     if (expectedStamp !== roomEditStamp(state)) fail('revision_conflict', 'The room or proposal changed while this editor was open. Close and reopen it before staging.');
@@ -543,6 +590,6 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     publish(target, false);
     return { operationSucceeded: true, documentId: id, message: `Opened ${target.room.name}. Your previous room and its draft are saved.` };
   });
-  return { getState, getDocuments, getHistory, getToolLog, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, humanOpenRoom, applyProposal, confirmSetup, discardProposal, resetDemo };
+  return { getState, getDocuments, getHistory, getToolLog, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanRestoreOwned, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, humanOpenRoom, applyProposal, confirmSetup, discardProposal, resetDemo };
 }
 export type FloortrisStore = ReturnType<typeof createStore>;

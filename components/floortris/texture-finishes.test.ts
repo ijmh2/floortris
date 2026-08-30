@@ -69,7 +69,7 @@ test('wrong target, unknown texture and stale appearance writes never mutate a r
   const store = createStore(makeCompactRoom());
   for (const [target, paletteId] of [['wall', 'pale-oak'], ['floor', 'sage-botanical'], ['furniture', 'woven-linen'], ['wall', 'https://external.example/texture']]) {
     const before = structuredClone(store.getState());
-    assert.equal((await store.execute('setAppearance', { ...revision(store), target, paletteId })).error?.code, 'invalid_palette');
+    assert.equal((await store.execute('setAppearance', { ...revision(store), target, paletteId })).error?.code, target === 'furniture' ? 'invalid_arguments' : 'invalid_palette');
     assert.deepEqual(store.getState(), before);
   }
   const stale = revision(store);

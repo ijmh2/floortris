@@ -20,7 +20,7 @@ test('wall TV has zero floor cells and target seats are excluded from TV obstacl
   const s=complete(),r=report(s); assert.equal(r.cells.filter(c=>c.objectIds.includes('tv')).length,0); assert.equal(r.flagsSummary.tv_seat,6); assert.equal(r.flagsSummary.tv_seat_out,5); assert.equal(r.flagsSummary.tv_blocked,undefined);
 });
 test('a low table may occupy part of the sofa front if one real approach remains',()=>{
-  const s=complete(), table=fromVariant('pebble-table-80','table'); table.originCell={x:13,y:15}; s.current.furniture.push(table);
+  const s=complete(), table=fromVariant('pebble-table-80','table'); table.originCell={x:13,y:14}; s.current.furniture.push(table);
   assert.equal(report(s).validation.status,'ok'); assert(!codes(s).includes('path_broken')); assert(!codes(s).includes('tv_blocked'));
 });
 test('a LOW obstruction spanning every sofa-front approach breaks floor access but not TV height rule',()=>{

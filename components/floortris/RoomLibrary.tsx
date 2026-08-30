@@ -14,7 +14,7 @@ export const ROOM_PRESETS = [
 export function dockVariants(profile: RoomProfile): string[] {
   if (profile.kind === 'bedroom') return [profile.sleeping === 'king' ? 'haven-king-160' : profile.sleeping === 'double' ? 'haven-double-140' : 'haven-single-100', 'nook-bedside-40', 'tallline-wardrobe-100', 'fern-40'];
   if (profile.kind === 'home_office') return ['line-desk-100', 'nest-chair-60', 'archive-tall-80', 'fern-40'];
-  if (profile.kind === 'bathroom_concept') return ['weave-mat-80', 'fern-40'];
+  if (profile.kind === 'bathroom_concept') return ['weave-mat-80', 'folio-vanity-80', 'nest-stool-38', 'fern-40'];
   return ['frame-tv-120', 'line-desk-100', 'pebble-table-80', 'fern-40'];
 }
 export function VariantPreview({ variant, rules }: { variant: Variant; rules: Rules }) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readSavedRoom } from './persistence.ts';
+import { readImportedRoom, readSavedRoom } from './persistence.ts';
 import { makeBedroomDouble, makeBedroomSingle, makeHomeOffice, makeBathroomConcept, makeCompactRoom } from './samples.ts';
 import { createStore } from './store.ts';
 import { CATALOGUE, fromVariant } from './data.ts';
@@ -34,11 +34,21 @@ test('every expanded preset round-trips without resetting to its seed', () => {
   assert.equal(readSavedRoom('{"version":99}'),null);
 });
 
+test('JSON import accepts only valid bounded exports and assigns a separate local document', () => {
+  const room = makeCompactRoom(), imported = readImportedRoom(JSON.stringify(room));
+  assert.ok(imported);
+  assert.notEqual(imported!.documentId, room.documentId);
+  assert.deepEqual(imported!.current, room.current);
+  assert.equal(readImportedRoom('not JSON'), null);
+  assert.equal(readImportedRoom('x'.repeat(1_000_001)), null);
+});
+
 test('catalogue profile filters offer no lounge furniture in bathroom concepts', () => {
   assert.ok(CATALOGUE.every(v=>v.recommendedProfiles?.length));
   const bathroom=CATALOGUE.filter(v=>v.recommendedProfiles!.includes('bathroom_concept'));
   assert.ok(bathroom.some(v=>v.id==='weave-mat-80'));
-  assert.ok(bathroom.every(v=>['rug','plant'].includes(v.kind)));
+  assert.ok(bathroom.every(v=>['rug','plant','storage','chair'].includes(v.kind)));
+  assert.ok(!bathroom.some(v=>['bed','sofa','tv'].includes(v.kind)));
 });
 
 test('concept fixtures stay measured and face inward on all four anchored walls', () => {

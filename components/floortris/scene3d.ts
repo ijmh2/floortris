@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { bounds } from './engine.ts';
-import { PALETTES } from './data.ts';
+import { formFor, PALETTES } from './data.ts';
 import { finishMaterial, mapFinishUV, type TextureOptions } from './finish-material.ts';
 import type { Furniture, Layout, Room, Rules, Wall } from './model.ts';
 
@@ -47,6 +47,9 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
   g.position.set(pose.x, pose.y, pose.z); g.rotation.y = pose.angle;
   const w = item.sizeCm.w / 100, d = item.sizeCm.d / 100, h = (item.sizeCm.h ?? 100) / 100;
   const body = material(colorFor(item.appearance)), wood = material('#ad8c63'), dark = material('#3e4844'), cream = material('#ece3d3');
+  // Catalogue variants may name a visual form; owned and measured pieces have no
+  // variantId, so they always fall back to the kind's own shape.
+  const form = formFor(item.variantId);
   // All ornament stays inside the measured envelope. Unknown heights use a disclosed placeholder.
   const legs = (height: number, radius = .025) => { radius=Math.min(radius,w/5,d/5); for (const x of [-1, 1]) for (const z of [-1, 1]) cylinder(g, radius, radius * .75, height, [x * (w / 2 - radius * 2), height / 2, z * (d / 2 - radius * 2)], wood); };
   if (item.sizeCm.h === null) {
@@ -54,6 +57,40 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     box(g, [w, h, d], [0, h / 2, 0], body);
     const source = new THREE.BoxGeometry(w, h, d);
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(source), new THREE.LineBasicMaterial({color:'#a96831'})); source.dispose(); edges.position.y = h / 2; g.add(edges);
+  } else if (item.kind === 'sofa' && form === 'corner') {
+    // Conservative L inside the measured rectangle: a main run plus a chaise return.
+    // The chaise sits on the west side, so the open corner is the south east
+    // quadrant in both views; the 2D notch uses the same convention.
+    const run = d * .55, arm = w * .38, plinth = h * .1, span = w - arm - w * .06;
+    box(g, [w, plinth, run], [0, plinth / 2, -(d - run) / 2], dark, .01);
+    box(g, [arm, plinth, d - run], [-w / 2 + arm / 2, plinth / 2, run / 2], dark, .01);
+    box(g, [w, h * .32, run], [0, h * .28, -(d - run) / 2], body, .06);
+    box(g, [arm, h * .32, d - run], [-w / 2 + arm / 2, h * .28, run / 2], body, .06);
+    box(g, [w, h * .62, run * .22], [0, h * .66, -d / 2 + run * .11], body, .05);
+    box(g, [arm * .18, h * .62, d - run], [-w / 2 + arm * .09, h * .66, run / 2], body, .05);
+    box(g, [w * .06, h * .5, run], [w / 2 - w * .03, h * .4, -(d - run) / 2], body, .04);
+    const seats = Math.max(2, Math.round(span / .7));
+    for (let i = 0; i < seats; i++) {
+      const x = -w / 2 + arm + span / seats * (i + .5);
+      box(g, [span / seats - .016, h * .17, run * .74], [x, h * .48, -d / 2 + run * .58], cream, .045);
+      box(g, [span / seats - .022, h * .36, run * .2], [x, h * .7, -d / 2 + run * .3], body, .045);
+    }
+    box(g, [arm * .8, h * .17, (d - run) * .82], [-w / 2 + arm / 2, h * .48, run / 2], cream, .045);
+    box(g, [w * .1, h * .22, run * .2], [w * .2, h * .7, -d / 2 + run * .34], cream, .04);
+  } else if (item.kind === 'sofa' && form === 'loveseat') {
+    // Rolled arms and two deep cushions read as a small sofa, not a shrunken three seater.
+    const roll = Math.min(h * .09, w * .05);
+    legs(h * .16, .035);
+    box(g, [w, h * .34, d], [0, h * .31, 0], body, .07);
+    box(g, [w * .9, h * .6, d * .2], [0, h * .68, -d * .39], body, .06);
+    for (const x of [-1, 1]) {
+      box(g, [w * .11, h * .44, d * .9], [x * (w / 2 - w * .055), h * .5, d * .03], body, .05);
+      const bolster = cylinder(g, roll, roll, d * .86, [x * (w / 2 - w * .055), h * .68, d * .03], body); bolster.rotation.x = Math.PI / 2;
+    }
+    for (const x of [-1, 1]) {
+      box(g, [w * .34, h * .17, d * .64], [x * w * .19, h * .5, d * .1], cream, .05);
+      box(g, [w * .32, h * .36, d * .16], [x * w * .19, h * .76, -d * .25], body, .05);
+    }
   } else if (item.kind === 'sofa') {
     legs(h * .14, .035);
     box(g, [w, h * .32, d], [0, h * .30, 0], body, .07);
@@ -66,10 +103,53 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
       box(g, [w * .84 / seats - .02, h * .39, d * .16], [x, h * .75, -d * .26], body, .045);
     }
     box(g, [w * .15, h * .32, d * .18], [-w * .29, h * .70, -d * .10], cream, .04);
+  } else if (item.kind === 'chair' && form === 'task') {
+    // The five star base stays inside the circle inscribed in the footprint.
+    const reach = Math.min(w, d) / 2, seat = h * .46;
+    for (let i = 0; i < 5; i++) {
+      const a = i * Math.PI * 2 / 5, spoke = box(g, [reach * .84, h * .035, reach * .16], [Math.cos(a) * reach * .42, h * .045, Math.sin(a) * reach * .42], dark, .008);
+      spoke.rotation.y = -a;
+      cylinder(g, reach * .07, reach * .07, h * .05, [Math.cos(a) * reach * .8, h * .025, Math.sin(a) * reach * .8], dark);
+    }
+    cylinder(g, reach * .1, reach * .13, seat - h * .07, [0, (seat + h * .07) / 2, 0], dark);
+    box(g, [w * .86, h * .09, d * .82], [0, seat + h * .045, d * .02], body, .03);
+    box(g, [w * .74, h * .42, d * .12], [0, h * .76, -d * .36], body, .035);
+    box(g, [w * .6, h * .05, d * .06], [0, h * .56, -d * .33], dark, .012);
+    for (const x of [-1, 1]) box(g, [w * .06, h * .06, d * .5], [x * w * .44, seat + h * .17, d * .04], dark, .015);
+  } else if (item.kind === 'chair' && form === 'stool') {
+    const reach = Math.min(w, d) / 2;
+    for (let i = 0; i < 4; i++) {
+      const a = Math.PI / 4 + i * Math.PI / 2, leg = cylinder(g, reach * .09, reach * .07, h * .86, [Math.cos(a) * reach * .58, h * .43, Math.sin(a) * reach * .58], wood);
+      leg.rotation.set(Math.sin(a) * .07, 0, -Math.cos(a) * .07);
+    }
+    cylinder(g, reach * .94, reach * .9, h * .13, [0, h * .935, 0], body);
+    cylinder(g, reach * .6, reach * .6, .004, [0, h - .002, 0], cream);
+  } else if (item.kind === 'chair' && form === 'armchair') {
+    legs(h * .13, .03);
+    box(g, [w, h * .28, d], [0, h * .25, 0], body, .05);
+    box(g, [w * .94, h * .5, d * .2], [0, h * .62, -d * .4], body, .05);
+    for (const x of [-1, 1]) box(g, [w * .13, h * .4, d * .86], [x * (w / 2 - w * .065), h * .44, d * .05], body, .04);
+    box(g, [w * .66, h * .13, d * .64], [0, h * .43, d * .06], cream, .045);
+    box(g, [w * .5, h * .28, d * .12], [0, h * .62, -d * .28], cream, .04);
+  } else if (item.kind === 'chair' && form === 'dining') {
+    legs(h * .5, .02);
+    box(g, [w, h * .09, d * .9], [0, h * .545, d * .05], body, .03);
+    for (const x of [-1, 1]) box(g, [w * .09, h * .42, d * .1], [x * w * .42, h * .78, -d * .4], wood, .015);
+    box(g, [w * .93, h * .1, d * .09], [0, h * .95, -d * .4], wood, .02);
+    box(g, [w * .8, h * .07, d * .06], [0, h * .78, -d * .4], wood, .015);
   } else if (item.kind === 'chair') {
     legs(h * .46);
     box(g, [w, h * .17, d * .91], [0, h * .49, d * .04], body, .055);
     box(g, [w, h * .46, d * .18], [0, h * .77, -d * .41], body, .055);
+  } else if (item.kind === 'bed' && form === 'day') {
+    // A day bed puts its back along the long side, with two low ends.
+    legs(h * .16, Math.min(.035, w * .035));
+    box(g, [w, h * .24, d], [0, h * .22, 0], wood, .035);
+    box(g, [w * .065, h, d], [-w * .4675, h / 2, 0], body, .04);
+    for (const z of [-1, 1]) box(g, [w, h * .52, d * .055], [0, h * .26, z * (d / 2 - d * .0275)], body, .04);
+    box(g, [w * .86, h * .22, d * .94], [w * .03, h * .45, 0], cream, .05);
+    box(g, [w * .8, h * .075, d * .55], [w * .04, h * .595, 0], body, .045);
+    for (const z of [-1, 1]) box(g, [w * .5, h * .14, d * .18], [w * .16, h * .63, z * d * .3], cream, .045);
   } else if (item.kind === 'bed') {
     // The measured envelope includes the headboard, not just the mattress.
     legs(h * .16, Math.min(.035, w * .035));
@@ -83,12 +163,148 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
       const x = pillows === 1 ? 0 : (i === 0 ? -1 : 1) * w * .235;
       box(g, [w * (pillows === 1 ? .68 : .40), h * .12, d * .20], [x, h * .625, -d * .30], cream, .045);
     }
+  } else if (item.kind === 'desk' && form === 'corner') {
+    // Rectangular envelope, L-shaped worktop: the inner corner is left open.
+    const arm = d * .52, top = Math.min(.07, h * .12), r = Math.min(.028, w * .04), stand = h - top;
+    box(g, [w, top, arm], [0, h - top / 2, -(d - arm) / 2], body, .02);
+    box(g, [arm, top, d - arm], [-(w - arm) / 2, h - top / 2, arm / 2], body, .02);
+    for (const [x, z] of [[-1, -1], [1, -1], [-1, 1]] as const) cylinder(g, r, r * .75, stand, [x * (w / 2 - r * 2), stand / 2, z * (d / 2 - r * 2)], wood);
+    cylinder(g, r, r * .75, stand, [w / 2 - r * 2, stand / 2, -d / 2 + arm - r * 2], wood);
+    cylinder(g, r, r * .75, stand, [-w / 2 + arm - r * 2, stand / 2, d / 2 - r * 2], wood);
+    box(g, [w * .22, .002, arm * .5], [-w * .16, h - .001, -(d - arm) / 2], cream);
+    box(g, [w * .1, .002, arm * .3], [w * .28, h, -(d - arm) / 2], dark);
+  } else if (item.kind === 'desk' && form === 'standing') {
+    const top = Math.min(.07, h * .12), post = w * .05;
+    box(g, [w, top, d], [0, h - top / 2, 0], body, .02);
+    for (const x of [-1, 1]) {
+      box(g, [post, h - top, d * .55], [x * (w / 2 - w * .1), (h - top) / 2, 0], dark, .01);
+      box(g, [post * 1.4, h * .035, d * .92], [x * (w / 2 - w * .1), h * .018, 0], dark, .008);
+    }
+    box(g, [w * .52, h * .05, d * .22], [0, h - top - h * .05, -d * .1], dark, .008);
+    box(g, [w * .16, h * .03, d * .05], [-w * .28, h - top - h * .02, d * .32], cream, .005);
+    box(g, [w * .3, .002, d * .34], [w * .12, h - .001, -d * .05], cream);
+  } else if (item.kind === 'desk' && form === 'dressing') {
+    const top = Math.min(.07, h * .12), bank = Math.min(w * .34, .42), stand = h - top;
+    box(g, [w, top, d], [0, h - top / 2, 0], body, .02);
+    box(g, [bank, stand * .62, d * .9], [w / 2 - bank / 2 - w * .02, h - top - stand * .31, 0], body, .012);
+    for (let i = 0; i < 2; i++) {
+      const y = h - top - stand * (.16 + i * .3);
+      box(g, [bank * .86, stand * .22, .012], [w / 2 - bank / 2 - w * .02, y, d * .45 - .008], body, .004);
+      box(g, [bank * .4, .012, .016], [w / 2 - bank / 2 - w * .02, y, d * .45 - .009], dark, .003);
+    }
+    for (const z of [-1, 1]) cylinder(g, .016, .011, stand, [-w / 2 + .04, stand / 2, z * (d / 2 - .04)], wood);
+    box(g, [w * .26, .003, d * .5], [-w * .22, h - .0015, 0], cream);
+    box(g, [w * .05, .004, d * .05], [-w * .32, h - .002, 0], dark);
+  } else if (item.kind === 'table' && form === 'console') {
+    const top = Math.min(.05, h * .08);
+    box(g, [w, top, d], [0, h - top / 2, 0], body, .015);
+    for (const x of [-1, 1]) for (const z of [-1, 1]) cylinder(g, .014, .009, h - top, [x * (w / 2 - .035), (h - top) / 2, z * (d / 2 - .028)], wood);
+    box(g, [w * .86, .014, d * .68], [0, h * .25, 0], body, .006);
+    box(g, [w * .18, h * .1, d * .44], [w * .24, h * .3, 0], cream, .012);
+    box(g, [w * .1, h * .07, d * .3], [-w * .22, h * .285, 0], dark, .01);
+  } else if (item.kind === 'table' && form === 'side') {
+    const reach = Math.min(w, d) / 2;
+    cylinder(g, reach * .58, reach * .66, h * .04, [0, h * .02, 0], dark);
+    cylinder(g, reach * .15, reach * .15, h * .92, [0, h * .5, 0], wood);
+    cylinder(g, reach, reach * .97, h * .08, [0, h * .96, 0], body);
+    cylinder(g, reach * .34, reach * .34, .003, [0, h - .0015, 0], cream);
+    box(g, [reach * .3, h * .09, reach * .3], [reach * .38, h * .955, 0], cream, .01);
+  } else if (item.kind === 'table' && form === 'meeting') {
+    const top = Math.min(.07, h * .12), post = w * .05;
+    box(g, [w, top, d], [0, h - top / 2, 0], body, .025);
+    for (const x of [-1, 1]) for (const z of [-1, 1]) box(g, [post, h - top, d * .08], [x * (w / 2 - post), (h - top) / 2, z * (d / 2 - d * .07)], wood, .008);
+    box(g, [w * .78, h * .05, d * .04], [0, h * .17, 0], wood, .006);
+    for (const x of [-1, 1]) box(g, [post * .6, h * .05, d * .7], [x * (w / 2 - post), h * .17, 0], wood, .006);
+    box(g, [w * .34, .003, d * .42], [0, h - .0015, 0], cream);
+    box(g, [w * .08, .004, d * .1], [-w * .3, h - .002, d * .2], dark);
+  } else if (item.kind === 'table' && form === 'bench') {
+    box(g, [w, h * .15, d], [0, h * .925, 0], wood, .012);
+    for (const x of [-1, 1]) box(g, [w * .05, h * .85, d * .82], [x * (w / 2 - w * .035), h * .425, 0], body, .01);
+    box(g, [w * .74, h * .07, d * .16], [0, h * .3, 0], body, .008);
+    box(g, [w * .3, h * .03, d * .5], [w * .2, h * .985, 0], cream, .01);
+  } else if (item.kind === 'coffee_table' && form === 'ottoman') {
+    for (const x of [-1, 1]) for (const z of [-1, 1]) cylinder(g, .016, .012, h * .12, [x * (w / 2 - .05), h * .06, z * (d / 2 - .05)], dark);
+    box(g, [w, h * .92, d], [0, h * .54, 0], body, .06);
+    box(g, [w, h * .012, d], [0, h * .7, 0], cream, .004);
+    box(g, [w * .3, h * .05, d * .3], [0, h * .975, 0], body, .02);
   } else if (item.kind === 'desk' || item.kind === 'table' || item.kind === 'coffee_table') {
     const top = Math.min(.07, h * .12); legs(h - top, item.kind === 'coffee_table' ? .035 : .025);
     box(g, [w, top, d], [0, h - top / 2, 0], body, item.kind === 'coffee_table' ? .10 : .025);
     // Inset surface accents avoid inventing additional measured height.
     box(g, [w * .24, .002, d * .32], [-w * .23, h - .001, -d * .08], cream);
     box(g, [w * .23, .002, d * .31], [-w * .20, h, -d * .045], material('#738474'));
+  } else if (item.kind === 'storage' && (form === 'shelving' || form === 'media')) {
+    // Open carcass: sides, deck, top and a back panel, then shelves with contents.
+    const t = Math.min(.018, w * .06, d * .12), bays = form === 'media' ? Math.max(1, Math.round(w / .45)) : 1;
+    for (const x of [-1, 1]) box(g, [t, h, d], [x * (w / 2 - t / 2), h / 2, 0], body);
+    box(g, [w - 2 * t, t, d], [0, h - t / 2, 0], body);
+    box(g, [w - 2 * t, t, d], [0, t / 2, 0], body);
+    box(g, [w - 2 * t, h - 2 * t, .008], [0, h / 2, -d / 2 + .005], form === 'media' ? dark : cream);
+    const decks = form === 'media' ? 1 : Math.min(5, Math.max(2, Math.round((h - 2 * t) / .34))), gap = (h - 2 * t) / (decks + 1);
+    for (let i = 1; i <= decks; i++) box(g, [w - 2 * t, .014, d - .014], [0, t + gap * i, .006], body);
+    for (let i = 1; i < bays; i++) box(g, [t, h - 2 * t, d], [-w / 2 + w * i / bays, h / 2, 0], body);
+    for (let s = 0; s <= decks; s++) {
+      let x = -w / 2 + t + .012;
+      for (let i = 0; i < 14; i++) {
+        const bw = .016 + (i % 3) * .008, bh = (gap - .016) * (.58 + (i % 4) * .09);
+        if (x + bw > w / 2 - t) break;
+        box(g, [bw, bh, d * .6], [x + bw / 2, t + gap * s + .008 + bh / 2, d * .04], [wood, dark, cream, body][(s + i) % 4]);
+        x += bw + .005;
+      }
+    }
+  } else if (item.kind === 'storage' && form === 'drawers') {
+    const runs = Math.min(5, Math.max(2, Math.round(h / .26)));
+    box(g, [w, h, d], [0, h / 2, 0], body, .015);
+    for (let i = 0; i < runs; i++) {
+      const face = h * .94 / runs, y = h * .03 + face * (i + .5);
+      box(g, [w * .93, face * .84, .012], [0, y, d / 2 - .008], body, .004);
+      box(g, [w * .34, .014, .016], [0, y, d / 2 - .009], dark, .003);
+    }
+  } else if (item.kind === 'storage' && form === 'bedside') {
+    const lift = h * .16, carcass = h - lift;
+    for (const x of [-1, 1]) for (const z of [-1, 1]) box(g, [w * .07, lift, d * .07], [x * (w / 2 - w * .045), lift / 2, z * (d / 2 - d * .045)], wood, .004);
+    box(g, [w, carcass, d], [0, lift + carcass / 2, 0], body, .012);
+    box(g, [w * .9, carcass * .3, .012], [0, h - carcass * .22, d / 2 - .008], body, .004);
+    box(g, [w * .3, .012, .016], [0, h - carcass * .22, d / 2 - .009], dark, .003);
+    box(g, [w * .84, carcass * .46, .01], [0, lift + carcass * .3, d / 2 - .006], dark, .004);
+  } else if (item.kind === 'storage' && form === 'basket') {
+    // Open topped: woven bands and a lining, never a door front.
+    const t = Math.min(.014, w * .06, d * .06);
+    for (const z of [-1, 1]) box(g, [w, h * .94, t], [0, h * .47, z * (d / 2 - t / 2)], body, .004);
+    for (const x of [-1, 1]) box(g, [t, h * .94, d - 2 * t], [x * (w / 2 - t / 2), h * .47, 0], body, .004);
+    box(g, [w - 2 * t, .012, d - 2 * t], [0, .006, 0], wood);
+    for (let i = 1; i <= 3; i++) {
+      const y = h * .94 * i / 4;
+      for (const z of [-1, 1]) box(g, [w * .99, .012, t * .6], [0, y, z * (d / 2 - t * .3)], wood);
+      for (const x of [-1, 1]) box(g, [t * .6, .012, (d - 2 * t) * .99], [x * (w / 2 - t * .3), y, 0], wood);
+    }
+    box(g, [w * .86, h * .07, d * .86], [0, h * .9, 0], cream, .01);
+    box(g, [w, h * .04, d], [0, h * .98, 0], wood, .008);
+  } else if (item.kind === 'storage' && form === 'wardrobe') {
+    box(g, [w, h, d], [0, h / 2, 0], body, .015);
+    box(g, [w * .98, h * .035, d * .96], [0, h * .0175, 0], dark, .006);
+    for (const x of [-1, 1]) {
+      box(g, [w * .485, h * .93, .012], [x * w * .2475, h * .51, d / 2 - .008], body, .005);
+      box(g, [.016, h * .22, .018], [x * Math.min(.026, w * .06), h * .55, d / 2 - .009], dark, .004);
+    }
+    box(g, [w, h * .014, d * .99], [0, h * .965, 0], dark);
+  } else if (item.kind === 'storage' && form === 'chest') {
+    for (const x of [-1, 1]) for (const z of [-1, 1]) box(g, [w * .06, h * .12, d * .08], [x * (w / 2 - w * .04), h * .06, z * (d / 2 - d * .05)], dark, .004);
+    box(g, [w, h * .72, d], [0, h * .48, 0], body, .012);
+    box(g, [w, h * .16, d], [0, h * .92, 0], wood, .012);
+    for (const x of [-1, 1]) box(g, [w * .05, h * .62, .01], [x * w * .3, h * .45, d / 2 - .006], wood, .003);
+    box(g, [w * .14, h * .04, .014], [0, h * .8, d / 2 - .008], dark, .003);
+  } else if (item.kind === 'storage' && form === 'vanity') {
+    const reach = Math.min(w, d);
+    box(g, [w, h * .74, d], [0, h * .37, 0], body, .012);
+    for (const x of [-1, 1]) {
+      box(g, [w * .47, h * .66, .012], [x * w * .242, h * .37, d / 2 - .008], body, .004);
+      box(g, [.012, h * .07, .018], [x * Math.min(.03, w * .06), h * .44, d / 2 - .009], dark, .003);
+    }
+    box(g, [w, h * .05, d], [0, h * .765, 0], cream, .008);
+    cylinder(g, reach * .3, reach * .24, h * .15, [0, h * .865, d * .03], cream);
+    cylinder(g, reach * .03, reach * .03, h * .12, [0, h * .85, -d * .32], dark);
+    box(g, [w * .05, h * .03, d * .14], [0, h * .905, -d * .25], dark, .004);
   } else if (item.kind === 'storage') {
     box(g, [w, h, d], [0, h / 2, 0], body, .018);
     for (const x of [-1,1]) {
@@ -154,11 +370,14 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     for (let i=0;i<8;i++) box(g, [w * .86,h * .018,d * .28], [0,h * (.12+i*.105),0], metal, .006);
     box(g, [w * .57,h * .36,d * .10], [w * .05,h * .59,d * .28], body, .01);
   } else if (item.kind === 'plant') {
-    const potH = h * .29; cylinder(g, Math.min(w,d) * .37, Math.min(w,d) * .27, potH, [0,potH / 2,0], material('#c39179'));
-    cylinder(g,.012,.014,h * .65,[0,h * .60,0],wood);
+    // A tilted leaf spans |cos|*sx + |sin|*sy, so both half-extents are capped
+    // against the envelope; the old spread pushed leaves ~2 cm outside it.
+    const potH = h * .29, reach = Math.min(w,d), leafX = Math.min(reach * .13,h * .1), leafY = Math.min(h * .085,reach * .12);
+    cylinder(g, reach * .37, reach * .27, potH, [0,potH / 2,0], material('#c39179'));
+    cylinder(g,Math.min(.012,reach * .06),Math.min(.014,reach * .07),h * .65,[0,h * .60,0],wood);
     for (let i = 0; i < 8; i++) {
       const a = i * 2.4, leaf = new THREE.Mesh(new THREE.SphereGeometry(1,12,8),body);
-      leaf.scale.set(w * .18,h * .12,d * .09); leaf.position.set(Math.cos(a) * w * .24,h * (.45+i*.062),Math.sin(a) * d * .24); leaf.rotation.z = Math.cos(a) * .5; leaf.castShadow = true; g.add(leaf);
+      leaf.scale.set(leafX,leafY,reach * .09); leaf.position.set(Math.cos(a) * reach * .2,h * (.45+i*.0586),Math.sin(a) * reach * .2); leaf.rotation.z = Math.cos(a) * .5; leaf.castShadow = true; g.add(leaf);
     }
   } else {
     box(g,[w,h,d],[0,h / 2,0],body,.025);

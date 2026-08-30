@@ -62,7 +62,7 @@ The collaboration model is the design, not a feature:
 
 ## Implementation
 
-**14 native tools** on `document.modelContext`: `getRoomState`, `listFurniture`,
+**15 native tools** on `document.modelContext`: `generateRoom`, `getRoomState`, `listFurniture`,
 `listCatalogue`, `createProposal`, `setRoomGeometry`, `setOpening`,
 `setConstraints`, `placeFurniture`, `updateFurniture`, `removeFurniture`,
 `proposeLayout`, `findPlacements`, `setAppearance`, `checkLayout`.
@@ -75,16 +75,19 @@ when they are not. `execute` honours the caller's `AbortSignal`.
 
 Under them sits one pure rule engine on a 20 cm grid: conservative
 rasterisation, height classes (a coffee table passes the TV strip but still
-blocks the floor), door sweep versus open leaf, clearance-aware flood fill for
-walking routes, and activity zones that must connect to the entrance. Unknown
-heights fail closed. Search is bounded and deterministic — `findPlacements`
-returns only engine-checked candidates, and never claims a layout is impossible.
+blocks the floor), door sweep versus open leaf and adjacent wall attachments,
+clearance-aware flood fill for walking routes, and activity zones that must
+connect to the entrance. Sofa/table gaps, usable bed sides, linked desk chairs
+and explicit furniture back edges are checked as relationships rather than labels.
+Unknown heights fail closed. Search is bounded — `findPlacements` returns only
+engine-checked candidates, ranks functional geometry above decorative preferences,
+and never claims a layout is impossible.
 
-**Testing.** 47 unit tests over the command store, plus `npm run test:native`,
+**Testing.** The command, engine and rendering tests run with `npm test`, and CI also runs typecheck, lint and production build. `npm run test:native`,
 which drives real Chrome against the deployed URL and runs a multi-turn journey
-through `document.modelContext.executeTool` — asserting all 14 tools register,
-a plan reaches `ready_for_review`, a stale revision is refused, and the locked
-owned sofa never moved.
+through `document.modelContext.executeTool` — asserting all 15 tools register,
+the `generateRoom` proposal flow reaches `ready_for_review`, a stale revision is
+refused, and Apply/room confirmation are unavailable to native tools.
 
 Stack: TypeScript, React, Next.js on the vinext runtime, deployed as a
 Cloudflare Worker. No backend, no database, no LLM service. Room data stays in
@@ -95,6 +98,11 @@ your browser.
 WebMCP is behind a flag today. Use **ChatGPT's in-app browser**, or **Chrome**
 with `chrome://flags/#enable-webmcp-testing` enabled, then relaunch and open the
 live URL. The `?` button on the board reports how many native tools registered.
+
+In ChatGPT, choose **GPT-5.6 Sol** or **Terra**. **Luna cannot call WebMCP tools
+today** — on Luna nothing is invoked, which resembles a broken page but is a
+model limitation. The tools panel distinguishes them: it reports registration
+independently of whether any model chooses to call.
 
 Without the flag the page says so plainly and every human editing feature still
 works — you simply cannot discover the tools.

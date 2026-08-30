@@ -82,7 +82,7 @@ Run against the dev server in **Google Chrome 151.0.7922.174**, driven by
 and `--enable-blink-features=WebMCP`. Without those flags `document.modelContext`
 is absent, so the flags are a hard prerequisite for any demo or judging run.
 
-All **14 tools registered and were discoverable** through `document.modelContext.getTools()`.
+All **15 tools registered and were discoverable** through `document.modelContext.getTools()`.
 
 A five-turn agent journey ran natively, end to end:
 
@@ -118,7 +118,7 @@ anyone writing a client or an eval against this page needs the shape above.
 
 ## 6. Open, in rough priority order
 
-1. **No JSON import.** Export writes a file with nothing to read it back.
+1. **Closed: validated JSON import.** Room → Import accepts a bounded, structurally validated Floortris export and opens it as a separate local document; it never overwrites the open room.
 2. **No stale-draft rebase.** A stale draft must be discarded and recreated by a
    human; an agent that hits `stale_proposal` has no recovery path of its own.
 3. **No undo history.**
@@ -131,3 +131,67 @@ anyone writing a client or an eval against this page needs the shape above.
    `Documents/Codex/2026-08-27/users-ivan-downloads-webmcp-cars-plan/outputs/`,
    a scratch path named after a different plan. Worth moving somewhere durable
    before the 3 September deadline.
+
+## 7. Follow-up remediation (29 August 2026)
+
+- Tool and UI wording now consistently names all 15 native tools, including
+  `generateRoom`; public repo/video URLs remain intentionally blank in
+  `SUBMISSION.md` until the owner publishes them.
+- `proposeLayout.profile` was removed because room profile is authoritative in
+  the proposal. Mutually exclusive placement and appearance schema shapes are
+  rejected before dispatch. Planner retries are replay-safe only when an
+  `idempotencyKey` is supplied.
+- Desk/chair repairs now return executable public calls: link an existing chair,
+  or find a checked linked-chair candidate and place it. Candidate linkage is
+  retained through the public placement contract.
+- Activity logs show only categories (for example, “catalogue piece”), never
+  opaque IDs, idempotency keys, room names, or other free-form arguments.
+- Optional owned pieces can be restored through the public `placeFurniture`
+  contract and a matching human helper. The review modal traps focus, restores
+  focus to whatever opened it, and cancels on Escape; while either modal is open
+  the header and stage are `inert`, so the background leaves the tab order and
+  the accessibility tree rather than relying on the trap alone.
+- Fixed board fixtures are clickable again. They advertised a room-editor dialog
+  and were keyboard-activatable, but a second `.ft-fixed` rule set `cursor:pointer`
+  without overriding the earlier `pointer-events:none`, so mouse clicks were dead
+  while the cursor promised otherwise. The label keeps `pointer-events:none`, and
+  drags are unaffected because furniture drags hold pointer capture.
+- The proposal button is **Re-plan draft**, not "Try again": the planner is
+  deterministic, so an unchanged draft re-plans to the same arrangement. The
+  label and its tooltip now say what the button does instead of implying variety.
+- Static metadata removes request-header-driven metadata work; the production
+  root no longer answers `no-store`. Middleware adds compatible `nosniff`,
+  same-origin referrer, and restrictive permissions headers, and its matcher
+  covers `/agent-guide` as well as `/`. Remote Google Fonts were removed in
+  favour of system fallbacks.
+- Testers are told to use **GPT-5.6 Sol or Terra**; Luna cannot call WebMCP tools
+  today, and on Luna a working page looks broken.
+- CI runs typecheck, lint, tests and production build. Asset/IP provenance is
+  recorded in `docs/asset-provenance.md`.
+- `native-check` asserts the `generateRoom` hero flow. Its layout assertion
+  checks that the draft is *applicable* — not blocked, and reporting the same
+  hard-failure count through both `generateRoom` and `checkLayout` — rather than
+  demanding zero soft warnings, which a deliberately tight 300 x 450 bedroom
+  cannot satisfy and does not need to.
+
+## 8. Rule-correction pass (29 August 2026)
+
+- Sofa/coffee-table handling now uses the sofa's rotated facing half-plane,
+  lateral overlap and a 40–60 cm edge gap. Only a valid relationship receives
+  the sofa-front occupancy exception; touching furniture blocks the frontage.
+- A hinged in-swing door's open leaf is tested against wall attachments on an
+  adjacent wall, so a TV behind the door cannot be accompanied by a green door
+  or TV badge.
+- Bed access is the intersection of valid and reachable long sides. Narrow
+  storage fronts accept edge-overlap by the full walking footprint. Each office
+  desk needs its own linked chair, and the chair must occupy that desk's pull zone.
+- Wall-oriented catalogue pieces declare a local <code>backEdge</code>. Candidate
+  search rotates it, tries exact centimetre-flush placements (including fractional
+  cell origins), reports end-on contact as <code>side_against_wall</code>, and returns
+  <code>backWall</code>, <code>backGapCm</code>, facing and checked-rule evidence.
+- Candidate ranking assigns functional issues far more weight than decorative
+  distribution, so the first valid coordinate no longer wins a semantic tie.
+- Meeting tables declare all-side clearance; the day bed declares its long-side
+  back; blanket-box wording matches its implemented front-access model.
+- Health badges now have clear, warning, blocked and missing states. Fixed-fixture
+  clearance failures emit one primary cause instead of duplicated route reports.

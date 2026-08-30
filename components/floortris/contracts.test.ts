@@ -69,13 +69,23 @@ test('owned locks and required status reject move and removal through tools',asy
 
 test('setup cannot change Current until the human confirms it; layouts cannot weaken rules',async()=>{
   const store=await draft('setup');const before=structuredClone(store.getState());
-  const edit=await store.execute('setRoomGeometry',{...rev(store),widthCm:640});assert.equal(edit.operationSucceeded,true);
-  assert.equal(store.getState().room.widthCm,before.room.widthCm);assert.equal(store.getState().proposal!.room.widthCm,640);
+  const edit=await store.execute('setRoomGeometry',{...rev(store),depthCm:500});assert.equal(edit.operationSucceeded,true);
+  assert.equal(store.getState().room.depthCm,before.room.depthCm);assert.equal(store.getState().proposal!.room.depthCm,500);
   assert.equal(store.getState().currentRevision,before.currentRevision);
   const p=rev(store);assert.equal(store.confirmSetup(p.proposalId,p.revision).operationSucceeded,true);
-  assert.equal(store.getState().room.widthCm,640);
+  assert.equal(store.getState().room.depthCm,500);
   const layout=await draft();
   assert.equal((await layout.execute('setConstraints',{...rev(layout),constraints:{walkHardCm:20,requiredKinds:[]}})).operationSucceeded,false);
+});
+
+test('human confirmation rejects an API setup that detaches a fixed wall fixture',async()=>{
+  const store=await draft('setup'),before=structuredClone(store.getState());
+  assert.equal((await store.execute('setRoomGeometry',{...rev(store),widthCm:800})).operationSucceeded,true);
+  const p=rev(store),result=store.confirmSetup(p.proposalId,p.revision);
+  assert.equal(result.operationSucceeded,false);assert.equal(result.error?.code,'invalid_room_inputs');
+  assert.match(result.error?.message||'',/wall|touch/i);
+  assert.equal(store.getState().room.widthCm,before.room.widthCm);
+  assert.equal(store.getState().proposal?.id,p.proposalId,'the rejected setup stays available for human correction');
 });
 
 test('creation and placement retries do not duplicate records',async()=>{
@@ -267,13 +277,14 @@ test('the tool log records every native call, including refusals, without leakin
   const read=log[2];
   assert.equal(read.ok,true);
   assert.equal(read.readOnly,true,'getRoomState is annotated read-only');
-  assert.equal(read.args,'which=current');
+  assert.equal(read.args,'view=current');
 
   for(const e of log){
     assert.ok(Number.isInteger(e.seq)&&e.seq>0);
     assert.ok(e.ms>=0);
     assert.ok(e.args.length<=120,'argument summary stays short');
     assert.ok(!e.args.includes('idempotencyKey'),'opaque keys are not echoed');
+    assert.ok(!e.args.includes('owned-sofa'),'object IDs are not echoed');
   }
   assert.ok(log[0].seq>log[1].seq&&log[1].seq>log[2].seq,'sequence increases');
 });
@@ -287,6 +298,42 @@ test('the tool log is bounded and read-only calls still notify subscribers',asyn
   assert.equal(store.getToolLog().length,60,'log is capped');
   assert.ok(notifications>=65,'a read-only call still wakes the UI so the feed updates');
   assert.equal(store.getToolLog()[0].seq,65,'newest entry is the last call');
+});
+
+test('optional owned furniture can be restored through the public placement contract', async () => {
+  const store = createStore();
+  assert.equal(store.humanSetRequired('owned-sofa', false).operationSucceeded, true);
+  assert.equal(store.humanSetLocks('owned-sofa', {}).operationSucceeded, true);
+  assert.equal(store.humanRemove('current', 'owned-sofa').operationSucceeded, true);
+  assert.ok(!store.getState().current.furniture.some(f => f.id === 'owned-sofa'));
+  assert.equal(store.humanRestoreOwned('current', 'owned-sofa').operationSucceeded, true);
+  assert.ok(store.getState().current.furniture.some(f => f.id === 'owned-sofa'));
+
+  const current = store.getState();
+  assert.equal((await store.execute('createProposal', { kind: 'layout', expectedCurrentRevision: current.currentRevision, expectedRuleRevision: current.ruleRevision, idempotencyKey: 'restore-owned-draft' })).operationSucceeded, true);
+  const p = store.getState().proposal!;
+  assert.equal((await store.execute('removeFurniture', { proposalId: p.id, revision: p.revision, objectId: 'owned-sofa' })).operationSucceeded, true);
+  const removed = store.getState().proposal!;
+  assert.equal((await store.execute('placeFurniture', { proposalId: removed.id, revision: removed.revision, ownedId: 'owned-sofa', idempotencyKey: 'restore-owned-tool' })).operationSucceeded, true);
+  assert.ok(store.getState().proposal!.layout.furniture.some(f => f.id === 'owned-sofa'));
+});
+
+test('desk-chair remediation only suggests public, schema-valid tool calls', async () => {
+  const { makeHomeOffice } = await import('./samples.ts');
+  const state = makeHomeOffice(), chair = state.proposal!.layout.furniture.find(f => f.kind === 'chair')!;
+  delete chair.linkedDeskId;
+  const store = createStore(state), report = await store.execute('checkLayout', { which: 'proposal', detail: 'issues' });
+  const issue = (report.issues as import('./model.ts').Issue[]).find(i => i.code === 'desk_chair_missing')!;
+  assert.ok(['updateFurniture', 'findPlacements'].includes(issue.fix?.tool || ''));
+  const repaired = await store.execute(issue.fix!.tool, issue.fix!.args);
+  assert.equal(repaired.operationSucceeded, true);
+  if (issue.fix!.tool === 'findPlacements') {
+    const candidate = (repaired.candidates as import('./model.ts').Candidate[])[0]!;
+    const p = store.getState().proposal!;
+    assert.equal((await store.execute('placeFurniture', { proposalId: p.id, revision: p.revision, candidateId: candidate.candidateId, idempotencyKey: 'repair-desk-chair' })).operationSucceeded, true);
+  }
+  const final = await store.execute('checkLayout', { which: 'proposal', detail: 'issues' });
+  assert.equal((final.brief as import('./model.ts').Report['brief']).status, 'satisfied');
 });
 
 // End-to-end repair contracts: use returned native arguments without adding tokens.

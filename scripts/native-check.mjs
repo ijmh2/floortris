@@ -55,25 +55,26 @@ try {
 
     const missing = expected.filter(n => !byName.has(n));
     const room = await call('getRoomState', { which: 'current' });
-    const draft = await call('createProposal', {
-      kind: 'layout',
-      expectedCurrentRevision: room.currentRevision,
-      expectedRuleRevision: room.ruleRevision,
-      idempotencyKey: 'native-check-' + Date.now(),
+    // Exercise the product's primary agent path, not just the older draft flow.
+    const generated = await call('generateRoom', {
+      name: 'Native-check bedroom', widthCm: 300, depthCm: 450,
+      profile: { kind: 'bedroom', sleeping: 'double', workspace: false, storage: true, bedsideQuantity: 1 },
+      openings: [{ id: 'entrance', kind: 'door', wall: 'south', offsetCm: 20, widthCm: 80, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true }],
+      idempotencyKey: 'native-generate-' + Date.now(),
     });
-    const planned = await call('proposeLayout', { proposalId: draft.proposalId, revision: draft.revision });
+    const draft = { proposalId: generated.proposalId, revision: generated.revision };
     const checked = await call('checkLayout', { which: 'proposal', detail: 'issues' });
-    const stale = await call('updateFurniture', { proposalId: draft.proposalId, revision: 1, objectId: 'owned-sofa', rotation: 90 });
-    const sofa = (await call('listFurniture', { which: 'proposal' })).furniture?.find(f => f.id === 'owned-sofa');
+    const stale = await call('setAppearance', { proposalId: draft.proposalId, revision: 1, target: 'wall', paletteId: 'warm' });
+    const humanOnlyAbsent = ['applyProposal', 'confirmSetup', 'discardProposal', 'humanSetLocks'].every(name => !byName.has(name));
 
     return {
       toolCount: tools.length, missing,
       annotated: tools.filter(t => t.annotations && 'readOnlyHint' in t.annotations).length,
-      readSucceeded: room.operationSucceeded, draftSucceeded: draft.operationSucceeded,
-      plannedStatus: planned.status, plannedBlocking: planned.validation?.hardFailures,
-      checkedStatus: checked.validation?.status, brief: checked.brief?.status,
+      readSucceeded: room.operationSucceeded, generatedSucceeded: generated.operationSucceeded,
+      plannedStatus: generated.status, plannedBlocking: generated.validation?.hardFailures,
+      checkedStatus: checked.validation?.status, checkedBlocking: checked.validation?.hardFailures, brief: checked.brief?.status,
       staleCode: stale.error?.code, staleRefused: stale.operationSucceeded === false,
-      sofaLocked: !!sofa?.locked?.position,
+      humanOnlyAbsent, review: generated.review,
     };
   }, EXPECTED_TOOLS);
 
@@ -81,13 +82,17 @@ try {
     result.missing.length ? 'missing: ' + result.missing.join(', ') : `${result.toolCount} discovered`);
   check('every tool carries annotations', result.annotated === result.toolCount, `${result.annotated}/${result.toolCount}`);
   check('getRoomState reads Current', result.readSucceeded);
-  check('createProposal opens a draft', result.draftSucceeded);
-  check('proposeLayout reaches ready_for_review', result.plannedStatus === 'ready_for_review', `status=${result.plannedStatus}`);
-  check('planned layout has no hard failures', result.plannedBlocking === 0, `blocking=${result.plannedBlocking}`);
-  check('checkLayout agrees the draft is ok', result.checkedStatus === 'ok', `status=${result.checkedStatus}`);
+  check('generateRoom opens a human-review proposal', result.generatedSucceeded && result.review?.requiresHumanApply === true && result.review?.applied === false);
+  check('generated proposal reaches ready_for_review', result.plannedStatus === 'ready_for_review', `status=${result.plannedStatus}`);
+  check('generated layout has no hard failures', result.plannedBlocking === 0, `blocking=${result.plannedBlocking}`);
+  // Soft warnings are expected and fine here: this is a deliberately tight
+  // 300x450 bedroom. What must hold is that the draft is not blocked and that
+  // checkLayout and generateRoom report the same shared engine verdict.
+  check('checkLayout agrees the draft is applicable', result.checkedStatus !== 'blocked' && result.checkedBlocking === result.plannedBlocking,
+    `status=${result.checkedStatus}, blocking=${result.checkedBlocking} vs generateRoom ${result.plannedBlocking}`);
   check('required brief is satisfied', result.brief === 'satisfied', `brief=${result.brief}`);
   check('stale revision is refused', result.staleRefused && result.staleCode === 'revision_conflict', `code=${result.staleCode}`);
-  check('owned sofa stayed locked', result.sofaLocked);
+  check('human-only Apply and room confirmation are not tools', result.humanOnlyAbsent);
 } finally {
   await browser.close();
 }
