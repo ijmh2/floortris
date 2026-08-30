@@ -69,7 +69,7 @@ test('custom creation is idempotent, revision-bound and rejects key reuse with c
 test('schema fails closed on unsupported kinds, dimensions, relationship claims and injected properties', async () => {
   const store = await draft(), base = input(store);
   for (const patch of [
-    { kind: 'tv' }, { widthCm: 0 }, { heightCm: 501 }, { rotation: 45 }, { appearance: 'url(https://example.test/model.glb)' },
+    { kind: 'tv' }, { kind: 'rug' }, { widthCm: 0 }, { heightCm: 501 }, { rotation: 45 }, { appearance: 'url(https://example.test/model.glb)' },
     { tags: ['wardrobe'] }, { svg: '<svg onload=alert(1) />' }, { modelUrl: 'https://example.test/model.glb' }, { ruleOverrides: { collision: false } },
   ]) {
     const result = await store.execute('createCustomFurniture', { ...base, ...patch, idempotencyKey: `bad-${Object.keys(patch)[0]}` });
@@ -175,5 +175,6 @@ test('native schema exposes the strict custom contract', () => {
   const schema = TOOL_SCHEMAS.createCustomFurniture;
   assert.equal(schema.readOnly, false); assert.match(schema.description, /human Apply|No arbitrary tags/i);
   assert.equal(validateSchema({ proposalId: 'p', revision: 1, label: 'x', kind: 'table', widthCm: 40, depthCm: 40, heightCm: 40, positionCm: { xCm: 0, yCm: 0 }, rotation: 0, appearance: 'oak', idempotencyKey: 'k' }, schema.inputSchema), null);
+  assert.match(validateSchema({ proposalId: 'p', revision: 1, label: 'x', kind: 'rug', widthCm: 40, depthCm: 40, heightCm: 1, positionCm: { xCm: 0, yCm: 0 }, rotation: 0, appearance: 'oak', idempotencyKey: 'k' }, schema.inputSchema) || '', /must be one of/);
   assert.match(validateSchema({ proposalId: 'p', revision: 1, label: 'x', kind: 'other', widthCm: 40, depthCm: 40, heightCm: 40, positionCm: { xCm: 0, yCm: 0 }, rotation: 0, appearance: 'oak', idempotencyKey: 'k' }, schema.inputSchema) || '', /must be one of/);
 });

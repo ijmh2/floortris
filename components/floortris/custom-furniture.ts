@@ -1,7 +1,7 @@
 import type { CustomFurnitureKind, Furniture, Rotation } from './model.ts';
 
 export const CUSTOM_FURNITURE_KINDS: readonly CustomFurnitureKind[] = [
-  'sofa', 'chair', 'table', 'coffee_table', 'desk', 'storage', 'bed', 'rug', 'plant',
+  'sofa', 'chair', 'table', 'coffee_table', 'desk', 'storage', 'bed', 'plant',
 ] as const;
 export const CUSTOM_FURNITURE_PALETTES = ['moss', 'oat', 'clay', 'graphite', 'oak'] as const;
 

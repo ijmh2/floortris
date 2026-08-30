@@ -11,7 +11,7 @@ export type LightingZone = 'ambient' | 'seating' | 'reading' | 'circulation';
 /** Agent-authored furniture is deliberately limited to movable floor objects.
  * Fixed, wall and ceiling roles need canonical room/mount records and therefore
  * remain catalogue or human room-input concerns. */
-export type CustomFurnitureKind = 'sofa' | 'chair' | 'table' | 'coffee_table' | 'desk' | 'storage' | 'bed' | 'rug' | 'plant';
+export type CustomFurnitureKind = 'sofa' | 'chair' | 'table' | 'coffee_table' | 'desk' | 'storage' | 'bed' | 'plant';
 export type CustomFurnitureProvenance = { source: 'agent_authored_one_off'; tool: 'createCustomFurniture' };
 export type RoomProfile =
   | { kind: 'lounge' }

@@ -25,7 +25,7 @@ export const openingSchema = { anyOf: [
   object({ ...openingBase, kind: { enum: ['window'] }, sillCm: num(0, 500), headCm: num(1, 500), type: { enum: ['fixed', 'side_hinge', 'sash', 'unknown'] }, windowAccess: bool }, ['id', 'kind', 'wall', 'offsetCm', 'widthCm', 'sillCm', 'headCm', 'type', 'windowAccess'])
 ] };
 const lightingZone = { enum: ['ambient', 'seating', 'reading', 'circulation'] };
-const customFurnitureKind = { type: 'string', enum: ['sofa', 'chair', 'table', 'coffee_table', 'desk', 'storage', 'bed', 'rug', 'plant'] };
+const customFurnitureKind = { type: 'string', enum: ['sofa', 'chair', 'table', 'coffee_table', 'desk', 'storage', 'bed', 'plant'] };
 const furniturePalette = { type: 'string', enum: ['moss', 'oat', 'clay', 'graphite', 'oak'] };
 const positionCm = object({ xCm: num(-1000, 1000), yCm: num(-1000, 1000) }, ['xCm', 'yCm']);
 const patch = { originCell: origin, rotation, variantId: str, targetSofaId: str, linkedDeskId: str, attachedOpeningId: str, supportObjectId: str, lightingZone, wallAnchor: anchor, elevationCm: num(0, 500) };

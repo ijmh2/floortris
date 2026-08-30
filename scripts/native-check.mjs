@@ -81,8 +81,8 @@ try {
     });
     draft.revision = ceiling.revision;
     const custom = await call('createCustomFurniture', {
-      ...draft, label: 'Native measured mat', kind: 'rug', widthCm: 37, depthCm: 29, heightCm: 1,
-      positionCm: { xCm: 40, yCm: 40 }, rotation: 0, appearance: 'clay',
+      ...draft, label: 'Native measured planter', kind: 'plant', widthCm: 37, depthCm: 29, heightCm: 45,
+      positionCm: { xCm: 300, yCm: 20 }, rotation: 0, appearance: 'clay',
       idempotencyKey: 'native-custom-' + Date.now(),
     });
     draft.revision = custom.revision;
@@ -108,7 +108,7 @@ try {
       customReview: custom.review,
       blindLinked: fixtures.furniture?.some(item => item.fixtureType === 'blind' && item.attachedOpeningId === 'native-window'),
       ceilingMounted: fixtures.furniture?.some(item => item.fixtureType === 'recessed' && item.kind === 'ceiling_light'),
-      customMeasured: fixtures.furniture?.some(item => item.ownership === 'custom' && item.label === 'Native measured mat' && item.sizeCm?.w === 37 && item.sizeCm?.d === 29 && item.sizeCm?.h === 1 && item.customProvenance?.tool === 'createCustomFurniture'),
+      customMeasured: fixtures.furniture?.some(item => item.ownership === 'custom' && item.label === 'Native measured planter' && item.sizeCm?.w === 37 && item.sizeCm?.d === 29 && item.sizeCm?.h === 45 && item.customProvenance?.tool === 'createCustomFurniture'),
     };
   }, EXPECTED_TOOLS);
 
