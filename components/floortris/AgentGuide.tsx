@@ -1,5 +1,5 @@
 import React from 'react';
-import { AGENT_TOOL_POLICY, AGENT_UNAVAILABLE, BEDROOM_TOOL_EXAMPLE } from './agent-workflow.ts';
+import { AGENT_TOOL_POLICY, AGENT_UNAVAILABLE, BEDROOM_TOOL_EXAMPLE, CUSTOM_FLOORPLAN_EXAMPLE } from './agent-workflow.ts';
 
 export default function AgentGuide() {
   return <article className="ft-agent-guide-content">
@@ -15,6 +15,11 @@ export default function AgentGuide() {
       <li>Verify with <code>getRoomState</code>, <code>listFurniture</code> and <code>checkLayout</code>, each with <code>{'which: "proposal"'}</code>. Use the returned proposal ID and latest revision for edits. Do not change views simply to read a different snapshot.</li>
       <li>Leave the furniture in Proposal. Confirm the human-facing planner tab shows the requested room heading, dimensions and proposal before saying it is visible. Report warnings and omissions, and invite the human to review and Apply.</li>
     </ol>
+    <h2>Recreate an L-shape or nook from a drawing</h2>
+    <p>Interpret the user’s dimensioned drawing into an ordered <code>floorPlan.points</code> list. The origin is the bounding box’s top-left; x runs east and y runs south. Walk around the perimeter in either direction, record every corner once, and do not repeat the first point at the end. Every edge must be horizontal or vertical. The declared <code>widthCm</code> and <code>depthCm</code> must equal the point list’s bounding box.</p>
+    <p>Floortris derives stable segments in list order: the first edge is <code>wall-1</code>, the next is <code>wall-2</code>, and so on. For each door, window, or wall-mounted TV on a custom outline, use the returned segment ID plus its outward <code>wall</code> direction. Segment offsets start at that segment’s normalized top/left endpoint, independent of which direction you traced the polygon. Call <code>getRoomState</code> and read <code>wallSegments</code> rather than guessing. Floortris rejects diagonals, crossed walls, missing segment IDs, furniture in cut-out areas, and routes through those areas.</p>
+    <p>This example is a 5 × 5 m envelope with its lower-right 2 × 2 m corner removed. Replace every number with the drawing’s measured dimensions:</p>
+    <pre><code>{JSON.stringify(CUSTOM_FLOORPLAN_EXAMPLE, null, 2)}</code></pre>
     <p><strong>{AGENT_TOOL_POLICY}</strong> Do not use “Try a proposal,” “Try again,” room forms, DOM scripts or direct storage edits as substitutes for native tools. Human editing stays available.</p>
     <h2>Keep the room visible to its owner</h2>
     <p>Rooms are saved in this browser’s local storage. A <code>?room=…</code> link selects an existing local room; it does not transfer a room to another browser, device or isolated agent session. If the user cannot see the room, verify the same browser session and active document before claiming it is open.</p>

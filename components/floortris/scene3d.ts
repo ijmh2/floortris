@@ -4,22 +4,20 @@ import { bounds } from './engine.ts';
 import { formFor, PALETTES } from './data.ts';
 import { finishMaterial, mapFinishUV, type TextureOptions } from './finish-material.ts';
 import type { Furniture, Layout, Room, Rules, Wall } from './model.ts';
+import { floorPoints, wallPointCm, wallSegments } from './floorplan.ts';
 
 // Metres in the renderer, centimetres in the document. +X east, +Z south, +Y up.
 export function furniturePose(item: Furniture, room: Room, cellCm = 20) {
   if (item.kind === 'tv' && item.wallAnchor) {
-    const { wall, offsetCm } = item.wallAnchor;
-    const u = (offsetCm + item.sizeCm.w / 2) / 100;
-    const inset = item.sizeCm.d / 200;
-    return { x: wall === 'north' || wall === 'south' ? u : wall === 'west' ? inset : room.widthCm / 100 - inset,
-      z: wall === 'west' || wall === 'east' ? u : wall === 'north' ? inset : room.depthCm / 100 - inset,
-      y: item.elevationCm / 100, angle: { north: 0, east: -Math.PI / 2, south: Math.PI, west: Math.PI / 2 }[wall] };
+    const { wall } = item.wallAnchor, point = wallPointCm(room, item.wallAnchor, item.sizeCm.w / 2, item.sizeCm.d / 2);
+    if (point) return { x: point[0] / 100, z: point[1] / 100, y: item.elevationCm / 100, angle: { north: 0, east: -Math.PI / 2, south: Math.PI, west: Math.PI / 2 }[wall] };
   }
   const b = bounds(item, cellCm);
   return { x: (b.x + b.w / 2) / 100, z: (b.y + b.d / 2) / 100, y: item.elevationCm / 100, angle: -item.rotation * Math.PI / 180 };
 }
-export function wallPoint(room: Room, wall: Wall, u: number, inward = 0): [number, number] {
-  return wall === 'north' ? [u, inward] : wall === 'south' ? [u, room.depthCm / 100 - inward] : wall === 'west' ? [inward, u] : [room.widthCm / 100 - inward, u];
+export function wallPoint(room: Room, wall: Wall, u: number, inward = 0, segmentId?: string): [number, number] {
+  const point = wallPointCm(room, { wall, segmentId, offsetCm: 0 }, u * 100, inward * 100);
+  return point ? [point[0] / 100, point[1] / 100] : [0, 0];
 }
 export function disposeObject(root: THREE.Object3D) {
   const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
@@ -388,27 +386,34 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
   return g;
 }
 
-export type RoomScene = { root: THREE.Group; walls: Map<Wall, THREE.Group>; pieces: Map<string, THREE.Group> };
+export type RoomScene = { root: THREE.Group; walls: Map<string, THREE.Group>; pieces: Map<string, THREE.Group> };
 export function buildRoomScene(room: Room, layout: Layout, rules: Rules, textures: TextureOptions = {}): RoomScene {
-  const root = new THREE.Group(), walls = new Map<Wall, THREE.Group>(), pieces = new Map<string, THREE.Group>();
+  const root = new THREE.Group(), walls = new Map<string, THREE.Group>(), pieces = new Map<string, THREE.Group>();
   const w = room.widthCm / 100, d = room.depthCm / 100, h = rules.ceilingCm / 100;
   const floorFinish = PALETTES.floor.find(p => p.id === layout.appearance.floor);
   const floor = finishMaterial(floorFinish, textures), wallMat = finishMaterial(PALETTES.wall.find(p => p.id === layout.appearance.wall), textures);
-  box(root,[w + .16,.14,d + .16],[w / 2,-.07,d / 2],material('#d2c7b4'),.03);
-  mapFinishUV(box(root,[w,.018,d],[w / 2,-.009,d / 2],floor), 'floor');
-  if (!floorFinish?.texture) {
+  if (room.floorPlan) {
+    const shape = new THREE.Shape(), points = floorPoints(room); shape.moveTo(points[0].xCm / 100, points[0].yCm / 100); points.slice(1).forEach(point => shape.lineTo(point.xCm / 100, point.yCm / 100)); shape.closePath();
+    const base = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: .14, bevelEnabled: false }), material('#d2c7b4')); base.rotation.x = Math.PI / 2; base.receiveShadow = true; root.add(base);
+    const surface = new THREE.Mesh(new THREE.ShapeGeometry(shape), floor); surface.rotation.x = Math.PI / 2; surface.position.y = .001; surface.receiveShadow = true; mapFinishUV(surface, 'floor'); root.add(surface);
+  } else {
+    box(root,[w + .16,.14,d + .16],[w / 2,-.07,d / 2],material('#d2c7b4'),.03);
+    mapFinishUV(box(root,[w,.018,d],[w / 2,-.009,d / 2],floor), 'floor');
+  }
+  if (!room.floorPlan && !floorFinish?.texture) {
     const seam = material('#c7b99f');
     for (let x = .18; x < w; x += .18) { const line = box(root,[.002,.001,d],[x,.001,d / 2],seam); line.castShadow=false; }
     for (let x = 0; x < w; x += .18) for (let z = (Math.round(x / .18) % 3) * .43 + .43; z < d; z += 1.29) { const line = box(root,[Math.min(.18,w-x),.001,.002],[x + Math.min(.18,w-x)/2,.001,z],seam); line.castShadow=false; }
   }
-  for (const wall of ['north','east','south','west'] as Wall[]) {
-    const group = new THREE.Group(); group.name = `wall-${wall}`; walls.set(wall,group); root.add(group);
-    const length = wall === 'north' || wall === 'south' ? w : d;
-    const openings = room.openings.filter(o=>o.wall===wall);
+  for (const segment of wallSegments(room)) {
+    const wall = segment.wall, segmentId = room.floorPlan ? segment.id : undefined;
+    const group = new THREE.Group(); group.name = `wall-${segment.id}`; group.userData.wall = wall; group.userData.segment = segment; walls.set(segment.id,group); root.add(group);
+    const length = segment.lengthCm / 100;
+    const openings = room.openings.filter(o=>room.floorPlan ? o.segmentId===segment.id : o.wall===wall);
     const cuts = [...new Set([0,length,...openings.flatMap(o=>[Math.max(0,Math.min(length,o.offsetCm/100)),Math.max(0,Math.min(length,(o.offsetCm+o.widthCm)/100))])])].sort((a,b)=>a-b);
     const slab = (a:number,b:number,bottom:number,top:number,mat=wallMat,thickness=.08,inset=-.04) => {
       if(b<=a||top<=bottom)return;
-      const [x,z]=wallPoint(room,wall,(a+b)/2,inset),horizontal=wall==='north'||wall==='south';
+      const [x,z]=wallPoint(room,wall,(a+b)/2,inset,segmentId),horizontal=wall==='north'||wall==='south';
       const mesh = box(group,horizontal?[b-a,top-bottom,thickness]:[thickness,top-bottom,b-a],[x,(top+bottom)/2,z],mat);
       if (mat === wallMat) mapFinishUV(mesh, horizontal ? 'north-south' : 'east-west');
     };
@@ -429,7 +434,7 @@ export function buildRoomScene(room: Room, layout: Layout, rules: Rules, texture
       } else if(opening.mechanism==='hinged') {
         const leaf=new THREE.Group(); leaf.name=`door-${opening.id}`;
         const hinge=a+(opening.hinge==='end'?opening.widthCm/100:0),width=opening.widthCm/100;
-        const [x,z]=wallPoint(room,wall,hinge,opening.swing==='in'?width/2:-width/2);
+        const [x,z]=wallPoint(room,wall,hinge,opening.swing==='in'?width/2:-width/2,segmentId);
         leaf.position.set(x,0,z);leaf.rotation.y=wall==='north'||wall==='south'?0:Math.PI/2;
         box(leaf,[.035,Math.min(h,2.1),width],[0,Math.min(h,2.1)/2,0],material('#cbbba1'),.01);
         // The opening height is visual-only; V1 has no measured door-height field.
@@ -441,7 +446,8 @@ export function buildRoomScene(room: Room, layout: Layout, rules: Rules, texture
   return {root,walls,pieces};
 }
 export function updateCutaway(scene: RoomScene, camera: THREE.Camera, room: Room, enabled: boolean) {
-  for (const [wall,group] of scene.walls) {
+  for (const group of scene.walls.values()) {
+    const wall = group.userData.wall as Wall;
     const near = wall==='north'?camera.position.z<room.depthCm/200:wall==='south'?camera.position.z>room.depthCm/200:wall==='west'?camera.position.x<room.widthCm/200:camera.position.x>room.widthCm/200;
     group.visible = !enabled || !near;
   }

@@ -12,6 +12,10 @@ grid, under the same rules. You measure what you already own and lock it. The
 agent proposes an arrangement around it on a separate layer. You review and
 apply. Nobody scrapes the DOM, and nobody clicks on your behalf.
 
+Give the agent a dimensioned sketch and it can also recreate an L-shaped room,
+alcove or nook as a validated rectilinear outline. The same missing corners are
+absent from the visible 2D floor, the 3D model, walking routes and placement search.
+
 ## Why WebMCP fits this problem
 
 **The floorplan is the product.** Delete the page and keep an API and you have
@@ -110,6 +114,7 @@ works — you simply cannot discover the tools.
 ## What it does not claim
 
 Not accessibility certification, not building or fire regulations, no optical TV
-visibility or sunlight modelling, no real purchasable SKUs. Rectangular rooms,
-quarter turns, 20 cm cells. These limits are stated in the product itself, not
+visibility or sunlight modelling, no real purchasable SKUs. Rectangular and
+custom rectilinear rooms, quarter turns, 20 cm cells; no curves, diagonals,
+holes or multi-room plans. These limits are stated in the product itself, not
 buried here.

@@ -9,3 +9,15 @@ export const BEDROOM_TOOL_EXAMPLE = {
   openings: [{ id: 'entrance', kind: 'door', wall: 'south', offsetCm: 20, widthCm: 80, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true }],
   idempotencyKey: 'replace-with-a-unique-request-key',
 };
+
+/** A dimensioned-sketch example: the lower-right 2 × 2 m corner is absent. */
+export const CUSTOM_FLOORPLAN_EXAMPLE = {
+  name: 'Example measured L room', widthCm: 500, depthCm: 500,
+  floorPlan: { kind: 'rectilinear', points: [
+    { xCm: 0, yCm: 0 }, { xCm: 500, yCm: 0 }, { xCm: 500, yCm: 300 },
+    { xCm: 300, yCm: 300 }, { xCm: 300, yCm: 500 }, { xCm: 0, yCm: 500 },
+  ] },
+  profile: { kind: 'lounge' },
+  openings: [{ id: 'entrance', kind: 'door', wall: 'south', segmentId: 'wall-5', offsetCm: 20, widthCm: 100, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true }],
+  idempotencyKey: 'replace-with-a-unique-request-key',
+};

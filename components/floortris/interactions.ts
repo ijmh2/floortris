@@ -1,16 +1,12 @@
 import { CATALOGUE, fromVariant } from './data.ts';
 import { bounds, validate } from './engine.ts';
-import { clone, type AppState, type Furniture, type GridCell, type Issue, type Layout, type Room, type Rules, type Wall } from './model.ts';
+import { clone, type AppState, type Furniture, type GridCell, type Issue, type Layout, type Room, type Rules } from './model.ts';
+import { nearestWallAnchor } from './floorplan.ts';
 export type OverlayMode = 'furniture' | 'height' | 'walk' | 'tv' | 'doors';
 export type PlacementPatch = Partial<Pick<Furniture, 'originCell' | 'rotation' | 'variantId' | 'wallAnchor'>>;
 export const editStamp = (s: AppState, which: 'current' | 'proposal') => `${s.currentRevision}:${s.ruleRevision}:${which === 'proposal' ? `${s.proposal?.id}:${s.proposal?.revision}` : 'current'}`;
 export function wallSnap(room: Room, width: number, xCm: number, yCm: number): Furniture['wallAnchor'] {
-  const walls: [Wall, number][] = [['north', Math.abs(yCm)], ['east', Math.abs(room.widthCm-xCm)], ['south', Math.abs(room.depthCm-yCm)], ['west', Math.abs(xCm)]];
-  const wall = walls.sort((a,b)=>a[1]-b[1])[0][0];
-  const horizontal = wall === 'north' || wall === 'south';
-  const length = horizontal ? room.widthCm : room.depthCm;
-  const offset = Math.round(((horizontal ? xCm : yCm)-width/2)/20)*20;
-  return { wall, offsetCm: Math.max(0,Math.min(Math.floor((length-width)/20)*20,offset)) };
+  return nearestWallAnchor(room, width, xCm, yCm);
 }
 export function dropPiece(variantId: string, room: Room, layout: Layout, xCm: number, yCm: number): Furniture {
   const piece = fromVariant(variantId,'__drop__');

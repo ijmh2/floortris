@@ -14,6 +14,7 @@ import RoomEditor from './RoomEditor.tsx';
 import FinishPicker from './FinishPicker.tsx';
 import RoomPicker from './RoomPicker.tsx';
 import { ROOM_PRESETS, dockVariants, VariantPreview } from './RoomLibrary.tsx';
+import { floorAreaM2, floorPoints, planClipPath, wallRect } from './floorplan.ts';
 const Room3D = lazy(() => import('./Room3D.tsx'));
 class ThreeViewBoundary extends React.Component<{ children: React.ReactNode; onReturn: () => void }, { failed: boolean }> {
   state = { failed: false };
@@ -108,7 +109,7 @@ function Board({ layout, room, rules, inventory, report, title, revision, compac
   const drag=useRef<Drag|null>(null);
   const [ghost,setGhost]=useState<Furniture|null>(null),[dockPoint,setDockPoint]=useState<{x:number;y:number}|null>(null);
   const position=(r:{x:number;y:number;w:number;d:number})=>({left:`${r.x/room.widthCm*100}%`,top:`${r.y/room.depthCm*100}%`,width:`${r.w/room.widthCm*100}%`,height:`${r.d/room.depthCm*100}%`});
-  const displayBounds=(p:Furniture)=>p.kind==='tv' && p.wallAnchor?wallBand(room,p.wallAnchor.wall,p.wallAnchor.offsetCm,p.sizeCm.w,14):bounds(p);
+  const displayBounds=(p:Furniture)=>p.kind==='tv' && p.wallAnchor?wallBand(room,p.wallAnchor.wall,p.wallAnchor.offsetCm,p.sizeCm.w,14,p.wallAnchor.segmentId):bounds(p);
   const point=(clientX:number,clientY:number)=>{const r=board.current!.getBoundingClientRect();return{x:(clientX-r.left-board.current!.clientLeft)/board.current!.clientWidth*room.widthCm,y:(clientY-r.top-board.current!.clientTop)/board.current!.clientHeight*room.depthCm};};
   const down=(e:React.PointerEvent<HTMLButtonElement>,p:Furniture,resize=false)=>{
     e.stopPropagation();onSelect(p.id);
@@ -147,16 +148,17 @@ function Board({ layout, room, rules, inventory, report, title, revision, compac
   const selectedShown=ghost?.id===selected?ghost:selectedPiece;
   const floorFinish=PALETTES.floor.find(p=>p.id===layout.appearance.floor);
   return <section className={`ft-board-shell ${compact?'ft-compact':''}`} aria-label={`${title} board`} style={{'--aspect':room.widthCm/room.depthCm} as React.CSSProperties}>
-    <div className="ft-board-caption"><span>{title} <em>rev. {revision}</em></span><span>{(room.widthCm*room.depthCm/10000).toFixed(1)} m²</span></div>
+    <div className="ft-board-caption"><span>{title} <em>rev. {revision}{room.floorPlan ? ' · custom outline' : ''}</em></span><span>{floorAreaM2(room).toFixed(1)} m²</span></div>
     <div className="ft-ruler-top"><span/><span>{fmt(room.widthCm/100)} m</span><span/></div>
     <div className="ft-board-wrap"><div className="ft-ruler-side">{fmt(room.depthCm/100)} m</div>
-      <div ref={board} className={`ft-board ft-mode-${mode}`} aria-label={`${title} grid`} style={{aspectRatio:`${room.widthCm}/${room.depthCm}`,'--grid-x':`${20/room.widthCm*100}%`,'--grid-y':`${20/room.depthCm*100}%`,'--floor':floorFinish?.color,'--wall':PALETTES.wall.find(p=>p.id===layout.appearance.wall)?.color,...(mode==='furniture'&&floorFinish?.texture?{backgroundImage:`url("${floorFinish.texture.url}")`,backgroundSize:`${floorFinish.texture.repeatCm[0]/room.widthCm*100}% ${floorFinish.texture.repeatCm[1]/room.depthCm*100}%`}:{})} as React.CSSProperties}
+      <div ref={board} className={`ft-board ft-mode-${mode} ${room.floorPlan ? 'ft-custom-floorplan' : ''}`} aria-label={`${title} grid`} style={{aspectRatio:`${room.widthCm}/${room.depthCm}`,clipPath:planClipPath(room),'--grid-x':`${20/room.widthCm*100}%`,'--grid-y':`${20/room.depthCm*100}%`,'--floor':floorFinish?.color,'--wall':PALETTES.wall.find(p=>p.id===layout.appearance.wall)?.color,...(mode==='furniture'&&floorFinish?.texture?{backgroundImage:`url("${floorFinish.texture.url}")`,backgroundSize:`${floorFinish.texture.repeatCm[0]/room.widthCm*100}% ${floorFinish.texture.repeatCm[1]/room.depthCm*100}%`}:{})} as React.CSSProperties}
         onPointerDown={e=>{if(!(e.target as HTMLElement).closest('button'))onSelect(null);}}
         onDragOver={e=>{if(!editable||!draggedVariant)return;e.preventDefault();e.dataTransfer.dropEffect='copy';setDockPoint(point(e.clientX,e.clientY));}}
         onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setDockPoint(null);}}
         onDrop={e=>{e.preventDefault();setDockPoint(null);if(!editable||!draggedVariant)return;const p=point(e.clientX,e.clientY);onDropVariant(dropPiece(draggedVariant,room,layout,p.x,p.y),stamp);}}>
         <div className="ft-board-grid"/>
-        {room.openings.map(o=>{const horizontal=o.wall==='north'||o.wall==='south';const style:React.CSSProperties=horizontal?{left:`${o.offsetCm/room.widthCm*100}%`,width:`${o.widthCm/room.widthCm*100}%`,[o.wall==='north'?'top':'bottom']:'-5px'}:{top:`${o.offsetCm/room.depthCm*100}%`,height:`${o.widthCm/room.depthCm*100}%`,[o.wall==='west'?'left':'right']:'-5px'};return <div key={o.id} className={`ft-opening ft-opening-${o.kind} ft-wall-${o.wall}`} style={style}><span>{o.kind==='window'?'WINDOW':o.entrance?'ENTRANCE':'DOOR'}</span></div>;})}
+        {room.floorPlan && <svg className="ft-floorplan-outline" viewBox={`0 0 ${room.widthCm} ${room.depthCm}`} preserveAspectRatio="none" aria-hidden="true"><polygon points={floorPoints(room).map(point=>`${point.xCm},${point.yCm}`).join(' ')} /></svg>}
+        {room.openings.map(o=>{const rect=wallRect(room,{wall:o.wall,segmentId:o.segmentId,offsetCm:o.offsetCm},o.widthCm,10);if(!rect)return null;return <div key={o.id} className={`ft-opening ft-opening-${o.kind} ft-wall-${o.wall}`} style={position(rect)}><span>{o.kind==='window'?'WINDOW':o.entrance?'ENTRANCE':'DOOR'}</span></div>;})}
         {room.fixtures.map(p=><button key={p.id} type="button" className={`ft-fixed ft-fixed-${p.kind}`} style={position(bounds(p))} title={`${p.label} · fixed${p.conceptualOnly ? " concept fixture" : ""} · edit room inputs`} aria-label={`Open room inputs to edit fixed ${p.label}${p.conceptualOnly ? ', concept fixture' : ''}`} aria-haspopup="dialog" onClick={onEditRoom}>{p.kind!=="radiator" && <Shape item={p}/>}<span>{p.kind==="toilet"?"WC":nice(p.kind).toUpperCase()} ▣</span></button>)}
         {layout.furniture.map(p=>{const shown=ghost?.id===p.id?ghost:p;return <button key={p.id} className={`${p.kind==='tv'?'ft-wall-tv':'ft-furniture'} ${p.kind==='rug'?'ft-rug':''} ${p.wallAnchor?`ft-wall-${p.wallAnchor.wall}`:''} ${selected===p.id?'selected':''} ${p.locked.position?'ft-locked':''}`} style={position(displayBounds(shown))} title={`${p.label} · ${p.sizeCm.w} × ${p.sizeCm.d} × ${p.sizeCm.h??'?'} cm${p.locked.position?' · pinned':''}`} aria-label={`${p.label}, ${p.sizeCm.w} by ${p.sizeCm.d} centimetres${p.locked.position?', position locked':''}`}
           onPointerDown={e=>down(e,p)} onPointerMove={e=>{if(drag.current)setGhost(dragPiece(e.clientX,e.clientY));}} onPointerUp={up} onPointerCancel={()=>{drag.current=null;setGhost(null);}} onKeyDown={e=>keyDown(e,p)} onFocus={()=>{if(editable)onSelect(p.id);}} onClick={()=>onSelect(p.id)}>
@@ -366,7 +368,7 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
     return relevant.some(i => i.severity === 'block') ? 'blocked' : relevant.some(i => i.severity === 'warning') ? 'warning' : 'clear';
   };
   const profileName = nice(profile.kind), profileLabel = profileName[0].toUpperCase() + profileName.slice(1);
-  const roomMeta = `${room.name.toLowerCase().includes(profileName) ? '' : `${profileLabel} · `}${fmt(room.widthCm * room.depthCm / 10000)} m²`;
+  const roomMeta = `${room.name.toLowerCase().includes(profileName) ? '' : `${profileLabel} · `}${fmt(floorAreaM2(room))} m²${room.floorPlan ? ' · custom outline' : ''}`;
   // A modal owns the screen: the rest of the app leaves the tab order and the
   // accessibility tree, so a trap is not the only thing holding focus in.
   const modalOpen = showSetup || review !== null;

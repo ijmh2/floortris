@@ -5,6 +5,7 @@ import { TOOL_SCHEMAS, validateSchema } from './schemas.ts';
 import { roomEditStamp, validateRoomInputs } from './room-inputs.ts';
 import { profileRules } from './samples.ts';
 import { documentId } from './persistence.ts';
+import { anchorForDirection, resolveWallSegment, wallRect, wallSegments } from './floorplan.ts';
 
 // All commands are checked against strict recursive schemas before this dispatcher reads dynamic keys.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema-validated JSON dispatch boundary; authoritative domain records remain strongly typed.
@@ -151,7 +152,13 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (piece.kind === 'tv') {
       const sofa = p.layout.furniture.find(o => o.id === piece.targetSofaId);
       const walls = sofa ? [faces[sofa.rotation], ...(['north', 'west', 'east', 'south'] as const).filter(w => w !== faces[sofa.rotation])] : ['north', 'west', 'east', 'south'] as const;
-      for (const wall of walls) { const length = wall === 'north' || wall === 'south' ? p.room.widthCm : p.room.depthCm; const b = sofa && bounds(sofa); const centered = b ? Math.round(((wall === 'north' || wall === 'south' ? b.x + b.w / 2 : b.y + b.d / 2) - piece.sizeCm.w / 2) / 20) * 20 : 0; positions.push({ wallAnchor: { wall, offsetCm: Math.max(0, centered) }, originCell: piece.originCell, rotation: piece.rotation }); for (let offsetCm = 0; offsetCm <= length - piece.sizeCm.w; offsetCm += 20) positions.push({ wallAnchor: { wall, offsetCm }, originCell: piece.originCell, rotation: piece.rotation }); }
+      for (const wall of walls) for (const segment of wallSegments(p.room).filter(candidate => candidate.wall === wall && candidate.lengthCm >= piece.sizeCm.w)) {
+        const b = sofa && bounds(sofa), centre = b ? (segment.horizontal ? b.x + b.w / 2 : b.y + b.d / 2) : segment.lengthCm / 2 + (segment.horizontal ? segment.x1 : segment.y1);
+        const start = segment.horizontal ? segment.x1 : segment.y1, centered = Math.max(0, Math.min(segment.lengthCm - piece.sizeCm.w, Math.round((centre - start - piece.sizeCm.w / 2) / unit) * unit));
+        const anchorBase = { wall, ...(p.room.floorPlan ? { segmentId: segment.id } : {}) };
+        positions.push({ wallAnchor: { ...anchorBase, offsetCm: centered }, originCell: piece.originCell, rotation: piece.rotation });
+        for (let offsetCm = 0; offsetCm <= segment.lengthCm - piece.sizeCm.w; offsetCm += unit) positions.push({ wallAnchor: { ...anchorBase, offsetCm }, originCell: piece.originCell, rotation: piece.rotation });
+      }
     } else {
       const sofa = p.layout.furniture.find(o => o.kind === 'sofa'), b = sofa && bounds(sofa), bed = p.layout.furniture.find(o => o.kind === 'bed');
       if (piece.kind === 'bed') {
@@ -175,8 +182,10 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       if (piece.kind === 'desk') {
         const headWall = bed && faces[((bed.rotation + 180) % 360) as Furniture['rotation']];
         for (const window of p.room.openings.filter(o => o.kind === 'window').sort((a, b) => Number(a.wall === headWall) - Number(b.wall === headWall))) {
-          const along = Math.round((window.offsetCm + window.widthCm / 2 - piece.sizeCm.w / 2) / 20), depth = Math.ceil(piece.sizeCm.d / 20);
-          positions.push({ originCell: window.wall === 'north' || window.wall === 'south' ? { x: along, y: window.wall === 'north' ? 0 : rows - depth } : { x: window.wall === 'west' ? 0 : cols - depth, y: along }, rotation: ({ north: 0, east: 90, south: 180, west: 270 } as const)[window.wall] });
+          const rotation = ({ north: 0, east: 90, south: 180, west: 270 } as const)[window.wall], bb = bounds({ ...piece, rotation }, unit), horizontal = window.wall === 'north' || window.wall === 'south';
+          const alongSize = horizontal ? bb.w : bb.d, depthSize = horizontal ? bb.d : bb.w, segment = resolveWallSegment(p.room, window); if (!segment || segment.lengthCm < alongSize) continue;
+          const offsetCm = Math.max(0, Math.min(segment.lengthCm - alongSize, Math.round((window.offsetCm + window.widthCm / 2 - alongSize / 2) / unit) * unit));
+          const rect = wallRect(p.room, { wall: window.wall, segmentId: window.segmentId, offsetCm }, alongSize, depthSize); if (rect) positions.push({ originCell: { x: rect.x / unit, y: rect.y / unit }, rotation });
         }
         positions.push({ originCell: { x: 0, y: 4 }, rotation: 270 }, { originCell: { x: cols - 3, y: 4 }, rotation: 90 });
       }
@@ -194,19 +203,20 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       }
       if (piece.kind === 'rug' && b) positions.push({ originCell: { x: Math.floor((b.x + b.w / 2 - piece.sizeCm.w / 2) / 20), y: Math.floor((b.y - piece.sizeCm.d + 40) / 20) }, rotation: 0 });
       if (wantsWallBacking(piece, unit)) {
-        const addWallPosition = (rotation: Furniture['rotation'], along: number) => {
-          const placed = { ...piece, rotation }, bb = bounds(placed, unit), back = furnitureBackWall(placed);
-          positions.push({ rotation, originCell: back === 'north' ? { x: along / unit, y: 0 } : back === 'south' ? { x: along / unit, y: (p.room.depthCm - bb.d) / unit } : back === 'west' ? { x: 0, y: along / unit } : { x: (p.room.widthCm - bb.w) / unit, y: along / unit } });
+        const addWallPosition = (rotation: Furniture['rotation'], segment: ReturnType<typeof wallSegments>[number], along: number) => {
+          const placed = { ...piece, rotation }, bb = bounds(placed, unit), back = furnitureBackWall(placed), horizontal = back === 'north' || back === 'south';
+          const rect = wallRect(p.room, { wall: back, segmentId: p.room.floorPlan ? segment.id : undefined, offsetCm: along }, horizontal ? bb.w : bb.d, horizontal ? bb.d : bb.w);
+          if (rect) positions.push({ rotation, originCell: { x: rect.x / unit, y: rect.y / unit } });
         };
         // Give every back-wall orientation a centred and end-aligned chance
         // before filling the bounded pool with denser samples of the first wall.
         for (const rotation of rotations) {
-          const bb = bounds({ ...piece, rotation }, unit), back = furnitureBackWall({ ...piece, rotation }), max = back === 'north' || back === 'south' ? p.room.widthCm - bb.w : p.room.depthCm - bb.d;
-          if (max >= 0) for (const along of [...new Set([max / 2, 0, max])]) addWallPosition(rotation, along);
+          const bb = bounds({ ...piece, rotation }, unit), back = furnitureBackWall({ ...piece, rotation }), horizontal = back === 'north' || back === 'south', alongSize = horizontal ? bb.w : bb.d;
+          for (const segment of wallSegments(p.room).filter(candidate => candidate.wall === back && candidate.lengthCm >= alongSize)) { const max = segment.lengthCm - alongSize; for (const along of [...new Set([max / 2, 0, max])]) addWallPosition(rotation, segment, along); }
         }
         for (const rotation of rotations) {
-          const bb = bounds({ ...piece, rotation }, unit), back = furnitureBackWall({ ...piece, rotation }), max = back === 'north' || back === 'south' ? p.room.widthCm - bb.w : p.room.depthCm - bb.d;
-          if (max >= 0) for (let along = unit * 2; along < max; along += unit * 2) addWallPosition(rotation, along);
+          const bb = bounds({ ...piece, rotation }, unit), back = furnitureBackWall({ ...piece, rotation }), horizontal = back === 'north' || back === 'south', alongSize = horizontal ? bb.w : bb.d;
+          for (const segment of wallSegments(p.room).filter(candidate => candidate.wall === back && candidate.lengthCm >= alongSize)) { const max = segment.lengthCm - alongSize; for (let along = unit * 2; along < max; along += unit * 2) addWallPosition(rotation, segment, along); }
         }
       }
       positions.push({ originCell: piece.originCell, rotation: piece.rotation });
@@ -263,7 +273,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       }
       if (['getRoomState', 'listFurniture', 'checkLayout'].includes(name)) {
         const snap = snapshot(a); let report = validate(snap.layout, snap.room, snap.rules, state.inventory); if (a.candidateId) { const c = candidates.get(a.candidateId) || fail('revision_conflict','Candidate is stale or unavailable.'); if (a.which !== 'proposal' || c.proposalRevision !== snap.revision || c.ruleRevision !== state.ruleRevision) fail('revision_conflict','Candidate revision differs from the inspected draft.'); report = candidateReports.get(a.candidateId) || fail('revision_conflict','Candidate detail is no longer available.'); } const common = { operationSucceeded: true, documentId: documentId(state), which: snap.which, revision: snap.revision, currentRevision: state.currentRevision, ruleRevision: state.ruleRevision, proposalId: state.proposal?.id, status: proposalStatus(state), profile: snap.room.profile || { kind: 'lounge' }, conceptualOnly: report.conceptualOnly || false };
-        if (name === 'getRoomState') return clone({ ...common, room: snap.room, appearance: snap.layout.appearance, profile: snap.room.profile || { kind: 'lounge' }, profileRequirements: report.brief.requirements || [], conceptualOnly: report.conceptualOnly || false, rules: snap.rules, coordinates: { origin: 'top-left', x: 'east', y: 'south', cellCm: 20, geometryUnit: 'cm' }, validation: report.validation, brief: report.brief, clearances: report.clearances, flagsSummary: report.flagsSummary, proposalKind: state.proposal?.kind, assumptions: 'Product assumptions only; bathroom concepts do not validate installation, regulations or safety.' });
+        if (name === 'getRoomState') return clone({ ...common, room: snap.room, wallSegments: wallSegments(snap.room), appearance: snap.layout.appearance, profile: snap.room.profile || { kind: 'lounge' }, profileRequirements: report.brief.requirements || [], conceptualOnly: report.conceptualOnly || false, rules: snap.rules, coordinates: { origin: 'top-left', x: 'east', y: 'south', cellCm: 20, geometryUnit: 'cm', customWallOffsets: 'from each segment’s normalized top/left endpoint' }, validation: report.validation, brief: report.brief, clearances: report.clearances, flagsSummary: report.flagsSummary, proposalKind: state.proposal?.kind, assumptions: 'Product assumptions only; bathroom concepts do not validate installation, regulations or safety.' });
         if (name === 'listFurniture') { const list = [...snap.room.fixtures, ...snap.layout.furniture], offset = a.offset || 0, limit = a.limit || 30; return clone({ ...common, furniture: list.slice(offset, offset + limit), total: list.length, offset, hasMore: offset + limit < list.length, ownedInventory: state.inventory }); }
         const inRegion = (c: { x: number; y: number }) => !a.region || (c.x >= a.region.x && c.y >= a.region.y && c.x < a.region.x + a.region.w && c.y < a.region.y + a.region.d);
         const entries = a.detail === 'flags' ? report.cells.filter(c => inRegion(c) && (!a.objectId || c.objectIds.includes(a.objectId)) && (!a.ruleCode || c.flags.includes(a.ruleCode))) : report.issues.filter(i => (!a.ruleCode || i.code === a.ruleCode) && (!a.objectId || i.objectIds.includes(a.objectId)) && (!a.region || i.cells.some(inRegion))).map(i => presentIssue(i, a.which === 'proposal' && !a.candidateId ? state.proposal : null, 60));
@@ -277,7 +287,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           const previous = state, id = `room-${crypto.randomUUID()}`;
           const appearance = { wall: a.appearance?.wall || 'warm', floor: a.appearance?.floor || 'oak' };
           for (const [target, value] of Object.entries(a.appearance || {})) if (!PALETTES[target as keyof typeof PALETTES].some(p => p.id === value)) fail('invalid_palette', `Unknown ${target} palette. Read listCatalogue for valid IDs.`);
-          const room: Room = { name: a.name, widthCm: a.widthCm, depthCm: a.depthCm, profile: clone(a.profile), openings: clone(a.openings), fixtures: [] };
+          const room: Room = { name: a.name, widthCm: a.widthCm, depthCm: a.depthCm, ...(a.floorPlan ? { floorPlan: clone(a.floorPlan) } : {}), profile: clone(a.profile), openings: clone(a.openings), fixtures: [] };
           const rules: Rules = { ...clone(DEFAULT_RULES), requiredKinds: [...profileRules(a.profile)] as Rules['requiredKinds'] };
           const inputError = validateRoomInputs(room, rules); if (inputError) fail('invalid_room_inputs', inputError);
           const layout: Layout = { furniture: [], appearance };
@@ -306,7 +316,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       } else {
         const p = clone(guard(a, ['setRoomGeometry', 'setOpening', 'setConstraints'].includes(name) ? 'setup' : 'layout'));
         if (name === 'findPlacements') { const searched = await search(p, a, signal); guard(a, 'layout'); searched.found.forEach(c => candidates.set(c.candidateId, c)); return { ...envelope(p), candidates: clone(searched.found), trials: searched.trials, searchBoundReached: searched.exhausted, explanation: searched.found.length ? 'Every returned placement passed relevant/new hard checks; layoutStatus includes unrelated existing issues.' : 'No candidate found within the bounded scan. This is not proof that no placement exists.' }; }
-        if (name === 'setRoomGeometry') { p.room = { ...p.room, ...(a.widthCm !== undefined ? {widthCm:a.widthCm} : {}), ...(a.depthCm !== undefined ? {depthCm:a.depthCm} : {}), ...(a.name !== undefined ? {name:a.name} : {}) }; }
+        if (name === 'setRoomGeometry') { p.room = { ...p.room, ...(a.widthCm !== undefined ? {widthCm:a.widthCm} : {}), ...(a.depthCm !== undefined ? {depthCm:a.depthCm} : {}), ...(a.name !== undefined ? {name:a.name} : {}) }; if (a.floorPlan !== undefined) { if (a.floorPlan === null) delete p.room.floorPlan; else p.room.floorPlan = clone(a.floorPlan); } }
         else if (name === 'setOpening') { if (state.room.openingLocks?.includes(a.opening.id) && !same(a.opening, state.room.openings.find(o => o.id === a.opening.id))) fail('lock_violation', 'This opening is pinned. Only the human can unpin it in Room inputs.'); if (a.opening.kind === 'window' && a.opening.headCm <= a.opening.sillCm) fail('invalid_opening', 'Window head must be above its sill.'); const idx = p.room.openings.findIndex(o => o.id === a.opening.id); if (idx >= 0) p.room.openings[idx] = clone(a.opening); else { if (p.room.openings.length >= 12) fail('room_limit', 'V1 supports at most 12 openings.'); p.room.openings.push(clone(a.opening)); } }
         else if (name === 'setConstraints') { p.rules = { ...p.rules, ...clone(a.constraints) }; checkRules(p.rules); }
         else if (name === 'setAppearance') {
@@ -465,7 +475,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Create a layout proposal first.');
     if (layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 pieces.'); next.sequence++;
     const o = fromVariant(variantId, `human-${next.sequence}`), sofa = layout.furniture.find(f => f.kind === 'sofa');
-    if (o.kind === 'tv') { o.targetSofaId = sofa?.id; if (sofa) { const b = bounds(sofa), wall = faces[sofa.rotation]; o.wallAnchor = { wall, offsetCm: Math.max(0, Math.round(((wall === 'north' || wall === 'south' ? b.x + b.w / 2 : b.y + b.d / 2) - o.sizeCm.w / 2) / 20) * 20) }; } }
+    if (o.kind === 'tv') { o.targetSofaId = sofa?.id; if (sofa) { const b = bounds(sofa), wall = faces[sofa.rotation], centre = wall === 'north' || wall === 'south' ? b.x + b.w / 2 : b.y + b.d / 2; o.wallAnchor = anchorForDirection(which === 'current' ? next.room : next.proposal!.room, wall, centre, o.sizeCm.w) || undefined; } }
     else if (o.kind === 'desk') { o.originCell = { x: 0, y: 4 }; o.rotation = 270; }
     else if (o.kind === 'coffee_table' && sofa) { const b = bounds(sofa); o.originCell = { x: Math.round((b.x + b.w / 2 - o.sizeCm.w / 2) / 20), y: Math.max(0, Math.floor((b.y - state.rules.walkHardCm - o.sizeCm.d) / 20)) }; }
     else if (o.kind === 'rug' && sofa) { const b = bounds(sofa); o.originCell = { x: Math.max(0, Math.floor((b.x + b.w / 2 - o.sizeCm.w / 2) / 20)), y: Math.max(0, Math.floor((b.y - o.sizeCm.d + 40) / 20)) }; }

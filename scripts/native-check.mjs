@@ -57,12 +57,17 @@ try {
     const room = await call('getRoomState', { which: 'current' });
     // Exercise the product's primary agent path, not just the older draft flow.
     const generated = await call('generateRoom', {
-      name: 'Native-check bedroom', widthCm: 300, depthCm: 450,
-      profile: { kind: 'bedroom', sleeping: 'double', workspace: false, storage: true, bedsideQuantity: 1 },
-      openings: [{ id: 'entrance', kind: 'door', wall: 'south', offsetCm: 20, widthCm: 80, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true }],
+      name: 'Native-check L room', widthCm: 500, depthCm: 500,
+      floorPlan: { kind: 'rectilinear', points: [
+        { xCm: 0, yCm: 0 }, { xCm: 500, yCm: 0 }, { xCm: 500, yCm: 300 },
+        { xCm: 300, yCm: 300 }, { xCm: 300, yCm: 500 }, { xCm: 0, yCm: 500 },
+      ] },
+      profile: { kind: 'lounge' },
+      openings: [{ id: 'entrance', kind: 'door', wall: 'south', segmentId: 'wall-5', offsetCm: 20, widthCm: 100, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true }],
       idempotencyKey: 'native-generate-' + Date.now(),
     });
     const draft = { proposalId: generated.proposalId, revision: generated.revision };
+    const generatedRoom = await call('getRoomState', { which: 'proposal' });
     const checked = await call('checkLayout', { which: 'proposal', detail: 'issues' });
     const stale = await call('setAppearance', { proposalId: draft.proposalId, revision: 1, target: 'wall', paletteId: 'warm' });
     const humanOnlyAbsent = ['applyProposal', 'confirmSetup', 'discardProposal', 'humanSetLocks'].every(name => !byName.has(name));
@@ -75,6 +80,8 @@ try {
       checkedStatus: checked.validation?.status, checkedBlocking: checked.validation?.hardFailures, brief: checked.brief?.status,
       staleCode: stale.error?.code, staleRefused: stale.operationSucceeded === false,
       humanOnlyAbsent, review: generated.review,
+      customPointCount: generatedRoom.room?.floorPlan?.points?.length,
+      customSegmentCount: generatedRoom.wallSegments?.length,
     };
   }, EXPECTED_TOOLS);
 
@@ -83,10 +90,12 @@ try {
   check('every tool carries annotations', result.annotated === result.toolCount, `${result.annotated}/${result.toolCount}`);
   check('getRoomState reads Current', result.readSucceeded);
   check('generateRoom opens a human-review proposal', result.generatedSucceeded && result.review?.requiresHumanApply === true && result.review?.applied === false);
+  check('custom outline returns six authoritative wall segments', result.customPointCount === 6 && result.customSegmentCount === 6,
+    `points=${result.customPointCount}, segments=${result.customSegmentCount}`);
   check('generated proposal reaches ready_for_review', result.plannedStatus === 'ready_for_review', `status=${result.plannedStatus}`);
   check('generated layout has no hard failures', result.plannedBlocking === 0, `blocking=${result.plannedBlocking}`);
-  // Soft warnings are expected and fine here: this is a deliberately tight
-  // 300x450 bedroom. What must hold is that the draft is not blocked and that
+  // Soft warnings are expected and fine here: the L-shape exercises wall-backed
+  // placement against several derived segments. What must hold is that the draft is not blocked and that
   // checkLayout and generateRoom report the same shared engine verdict.
   check('checkLayout agrees the draft is applicable', result.checkedStatus !== 'blocked' && result.checkedBlocking === result.plannedBlocking,
     `status=${result.checkedStatus}, blocking=${result.checkedBlocking} vs generateRoom ${result.plannedBlocking}`);

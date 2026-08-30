@@ -1,4 +1,5 @@
 import { faces, key, opposite, rotations, type ActivityZone, type Rotation, type BriefRequirement, type Cell, type Door, type Furniture, type GridCell, type Issue, type Layout, type Opening, type Rect, type Report, type Room, type Rules, type Wall } from './model.ts';
+import { cellInsideRoom, floorAreaM2, rectInsideRoom, resolveWallSegment, wallRect, wallSegments } from './floorplan.ts';
 
 export const isSolid = (o: Furniture) => o.kind !== 'rug' && o.kind !== 'tv';
 export function bounds(o: Furniture, cellCm = 20): Rect {
@@ -28,7 +29,13 @@ export function rotateWall(wall: Wall, rotation: Rotation): Wall { return WALLS[
 export function furnitureBackWall(o: Furniture): Wall { return rotateWall(o.backEdge || 'north', o.rotation); }
 export function wallGaps(o: Furniture, room: Room, cellCm = 20): Record<Wall, number> {
   const b = bounds(o, cellCm);
-  return { west: b.x, east: room.widthCm - (b.x + b.w), north: b.y, south: room.depthCm - (b.y + b.d) };
+  const gaps: Record<Wall, number[]> = { north: [], east: [], south: [], west: [] };
+  for (const segment of wallSegments(room)) {
+    const overlapsAlong = segment.horizontal ? b.x < segment.x2 && b.x + b.w > segment.x1 : b.y < segment.y2 && b.y + b.d > segment.y1;
+    if (!overlapsAlong) continue;
+    gaps[segment.wall].push(segment.wall === 'north' ? b.y - segment.y1 : segment.wall === 'south' ? segment.y1 - (b.y + b.d) : segment.wall === 'west' ? b.x - segment.x1 : segment.x1 - (b.x + b.w));
+  }
+  return { north: Math.min(...gaps.north, Infinity), east: Math.min(...gaps.east, Infinity), south: Math.min(...gaps.south, Infinity), west: Math.min(...gaps.west, Infinity) };
 }
 export function wantsWallBacking(o: Furniture, cellCm = 20): boolean {
   if (o.tags.includes('bedside')) return false;
@@ -49,18 +56,15 @@ function overlaps(a: Rect, b: Rect): boolean { return a.x < b.x + b.w && a.x + a
 function openDoorLeafRect(room: Room, door: Door): Rect | null {
   if (door.mechanism !== 'hinged' || door.swing !== 'in') return null;
   const hinge = door.offsetCm + (door.hinge === 'end' ? door.widthCm : 0), t = 0.5;
-  if (door.wall === 'north') return { x: hinge - t, y: 0, w: t * 2, d: door.widthCm };
-  if (door.wall === 'south') return { x: hinge - t, y: room.depthCm - door.widthCm, w: t * 2, d: door.widthCm };
-  if (door.wall === 'west') return { x: 0, y: hinge - t, w: door.widthCm, d: t * 2 };
-  return { x: room.widthCm - door.widthCm, y: hinge - t, w: door.widthCm, d: t * 2 };
+  const segment = resolveWallSegment(room, door); if (!segment) return null;
+  if (door.wall === 'north') return { x: segment.x1 + hinge - t, y: segment.y1, w: t * 2, d: door.widthCm };
+  if (door.wall === 'south') return { x: segment.x1 + hinge - t, y: segment.y1 - door.widthCm, w: t * 2, d: door.widthCm };
+  if (door.wall === 'west') return { x: segment.x1, y: segment.y1 + hinge - t, w: door.widthCm, d: t * 2 };
+  return { x: segment.x1 - door.widthCm, y: segment.y1 + hinge - t, w: door.widthCm, d: t * 2 };
 }
 function wallAttachmentProjection(room: Room, item: Furniture): Rect | null {
   if (!item.wallAnchor) return null;
-  const { wall, offsetCm } = item.wallAnchor, depth = Math.max(0.5, item.sizeCm.d);
-  if (wall === 'north') return { x: offsetCm, y: 0, w: item.sizeCm.w, d: depth };
-  if (wall === 'south') return { x: offsetCm, y: room.depthCm - depth, w: item.sizeCm.w, d: depth };
-  if (wall === 'west') return { x: 0, y: offsetCm, w: depth, d: item.sizeCm.w };
-  return { x: room.widthCm - depth, y: offsetCm, w: depth, d: item.sizeCm.w };
+  return wallRect(room, item.wallAnchor, item.sizeCm.w, Math.max(0.5, item.sizeCm.d));
 }
 /**
  * `faces` describes the front/foot of an item (rotation 0 is south), so a bed
@@ -79,33 +83,29 @@ export function bedAccessBands(o: Furniture, depth: number, headExclusionCm = 60
     : [{ side: 'left' as const, rect: { x: b.x, y: b.y - depth, w: b.w, d: depth } }, { side: 'right' as const, rect: { x: b.x, y: b.y + b.d, w: b.w, d: depth } }];
   return raw.map(item => ({ ...item, headExcluded: longVertical ? { ...item.rect, y: startsAtHead ? item.rect.y : item.rect.y + item.rect.d - excluded, d: excluded } : { ...item.rect, x: startsAtHead ? item.rect.x : item.rect.x + item.rect.w - excluded, w: excluded }, rect: trim(item.rect) }));
 }
-export function wallBand(room: Room, wall: Wall, offset: number, width: number, depth: number): Rect {
-  switch (wall) {
-    case 'north': return { x: offset, y: 0, w: width, d: depth };
-    case 'south': return { x: offset, y: room.depthCm - depth, w: width, d: depth };
-    case 'west': return { x: 0, y: offset, w: depth, d: width };
-    case 'east': return { x: room.widthCm - depth, y: offset, w: depth, d: width };
-  }
+export function wallBand(room: Room, wall: Wall, offset: number, width: number, depth: number, segmentId?: string): Rect {
+  return wallRect(room, { wall, offsetCm: offset, segmentId }, width, depth) || { x: 0, y: 0, w: 0, d: 0 };
 }
-function cellWallRange(cell: Cell, room: Room, wall: Wall, unit: number) {
+function cellWallRange(cell: Cell, room: Room, wall: Wall, unit: number, segmentId?: string) {
   const x = cell.x * unit, y = cell.y * unit;
-  if (wall === 'north') return { u: x, v: y };
-  if (wall === 'south') return { u: x, v: room.depthCm - y - unit };
-  if (wall === 'west') return { u: y, v: x };
-  return { u: y, v: room.widthCm - x - unit };
+  const segment = resolveWallSegment(room, { wall, segmentId }); if (!segment) return { u: Infinity, v: Infinity };
+  if (wall === 'north') return { u: x - segment.x1, v: y - segment.y1 };
+  if (wall === 'south') return { u: x - segment.x1, v: segment.y1 - y - unit };
+  if (wall === 'west') return { u: y - segment.y1, v: x - segment.x1 };
+  return { u: y - segment.y1, v: segment.x1 - x - unit };
 }
 export function openingMasks(room: Room, opening: Opening, rules: Rules): { reserve: Cell[]; leaf: Cell[] } {
   const unit = rules.cellCm;
   if (opening.kind === 'window') {
     // Side hinges: conservative full-depth envelope, not a claim of exact sash dynamics.
-    return { reserve: opening.type === 'side_hinge' ? rectCells(wallBand(room, opening.wall, opening.offsetCm, opening.widthCm, opening.widthCm), unit) : [], leaf: [] };
+    return { reserve: opening.type === 'side_hinge' ? rectCells(wallBand(room, opening.wall, opening.offsetCm, opening.widthCm, opening.widthCm, opening.segmentId), unit) : [], leaf: [] };
   }
   if (opening.mechanism !== 'hinged') return { reserve: [], leaf: [] };
-  if (opening.swing === 'out') return { reserve: rectCells(wallBand(room, opening.wall, opening.offsetCm, opening.widthCm, rules.walkHardCm), unit), leaf: [] };
+  if (opening.swing === 'out') return { reserve: rectCells(wallBand(room, opening.wall, opening.offsetCm, opening.widthCm, rules.walkHardCm, opening.segmentId), unit), leaf: [] };
   const reserve: Cell[] = [], leaf: Cell[] = [];
   const hinge = opening.offsetCm + (opening.hinge === 'end' ? opening.widthCm : 0);
-  for (const cell of rectCells(wallBand(room, opening.wall, opening.offsetCm, opening.widthCm, opening.widthCm), unit)) {
-    const { u, v } = cellWallRange(cell, room, opening.wall, unit);
+  for (const cell of rectCells(wallBand(room, opening.wall, opening.offsetCm, opening.widthCm, opening.widthCm, opening.segmentId), unit)) {
+    const { u, v } = cellWallRange(cell, room, opening.wall, unit, opening.segmentId);
     const nearU = opening.hinge === 'start' ? Math.max(0, u - hinge) : Math.max(0, hinge - (u + unit));
     if (nearU * nearU + Math.max(0, v) ** 2 < opening.widthCm ** 2) reserve.push(cell);
     const leafU = opening.hinge === 'start' ? hinge + 1 : hinge - 1;
@@ -123,9 +123,10 @@ export function footprintPass(columns: number, rows: number, blocked: Set<string
     const cell = { x, y }; valid.add(key(cell));
     for (let yy = y; yy < y + size; yy++) for (let xx = x; xx < x + size; xx++) covered.add(`${xx},${yy}`);
     for (const door of doors.filter(d => d.entrance && d.mechanism === 'hinged')) {
-      const tangential = (door.wall === 'north' || door.wall === 'south' ? x : y) * unit;
-      const edge = door.wall === 'north' ? y === 0 : door.wall === 'south' ? y + size === Math.floor(room.depthCm / unit) : door.wall === 'west' ? x === 0 : x + size === Math.floor(room.widthCm / unit);
-      if (edge && tangential >= door.offsetCm && tangential + size * unit <= door.offsetCm + door.widthCm) starts.push(cell);
+      const segment = resolveWallSegment(room, door); if (!segment) continue;
+      const tangential = (door.wall === 'north' || door.wall === 'south' ? x * unit - segment.x1 : y * unit - segment.y1);
+      const edge = door.wall === 'north' ? y === Math.ceil(segment.y1 / unit) : door.wall === 'south' ? y + size === Math.floor(segment.y1 / unit) : door.wall === 'west' ? x === Math.ceil(segment.x1 / unit) : x + size === Math.floor(segment.x1 / unit);
+      if (edge && tangential >= door.offsetCm && tangential + size * unit <= door.offsetCm + door.widthCm && !starts.some(start => start.x === x && start.y === y)) starts.push(cell);
     }
   }
   const queue = [...starts]; starts.forEach(c => reached.add(key(c)));
@@ -163,9 +164,11 @@ function largestEmptyRectangle(columns: number, rows: number, blocked: Set<strin
 }
 export function validate(layout: Layout, room: Room, rules: Rules, inventory: Furniture[] = [], includeFixes = true): Report {
   const unit = rules.cellCm, columns = Math.ceil(room.widthCm / unit), rows = Math.ceil(room.depthCm / unit);
-  const checkedRules = ['physical_fit', 'solid_overlap', 'door_sweep', 'door_leaf_wall_attachments', 'windows', 'radiator', 'fixture_approaches', 'sofa_table_relationship', 'bed_side_access', 'desk_chair_relationship', 'storage_use_zones', 'wall_backing', 'orthogonal_hard_path', 'preferred_path', 'full_tv_strip', 'ceiling', 'owned_locks', 'required_brief'];
+  const checkedRules = ['custom_floor_boundary', 'physical_fit', 'solid_overlap', 'door_sweep', 'door_leaf_wall_attachments', 'windows', 'radiator', 'fixture_approaches', 'sofa_table_relationship', 'bed_side_access', 'desk_chair_relationship', 'storage_use_zones', 'wall_backing', 'orthogonal_hard_path', 'preferred_path', 'full_tv_strip', 'ceiling', 'owned_locks', 'required_brief'];
   const cells: GridCell[] = Array.from({ length: rows * columns }, (_, i) => ({ x: i % columns, y: Math.floor(i / columns), heightClass: 'FREE', objectIds: [], flags: [] }));
   const lookup = new Map(cells.map(c => [key(c), c]));
+  const insideKeys = new Set(cells.filter(c => cellInsideRoom(room, c.x, c.y, unit)).map(key));
+  cells.filter(c => !insideKeys.has(key(c))).forEach(c => c.flags.push('outside_floorplan'));
   const issues: Issue[] = [], zones: ActivityZone[] = [];
   const all = [...room.fixtures, ...layout.furniture];
   const masks = new Map(all.map(o => [o.id, o.kind === 'tv' ? [] : rectCells(bounds(o, unit), unit)]));
@@ -175,7 +178,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   for (const o of all) {
     const b = bounds(o, unit), at = masks.get(o.id)!;
     if (o.kind !== 'tv' && (b.w <= 0 || b.d <= 0)) issue('footprint_invalid', `${o.label} has no measurable footprint, so no clearance or route rule can see it. Give it a positive width and depth.`, [o.id]);
-    if (o.kind !== 'tv' && (b.x < 0 || b.y < 0 || b.x + b.w > room.widthCm || b.y + b.d > room.depthCm)) issue('out_of_room', `${o.label} extends past the room. Move it inside the boundary.`, [o.id], at.filter(c => !lookup.has(key(c))));
+    if (o.kind !== 'tv' && !rectInsideRoom(room, b)) issue('out_of_room', `${o.label} extends past the room outline. Move it inside the boundary.`, [o.id], at.filter(c => !insideKeys.has(key(c))));
     if (o.sizeCm.h !== null && o.elevationCm + o.sizeCm.h > rules.ceilingCm) issue('ceiling_collision', `${o.label} is above the ${rules.ceilingCm} cm ceiling. Check the measured height or mount.`, [o.id]);
     if (!isSolid(o)) continue;
     for (const c of at) { const g = lookup.get(key(c)); if (!g) continue; g.objectIds.push(o.id); g.heightClass = o.sizeCm.h === null || g.heightClass === 'UNKNOWN_HEIGHT' ? 'UNKNOWN_HEIGHT' : o.sizeCm.h > rules.H_lowCm || g.heightClass === 'TALL' ? 'TALL' : 'LOW'; }
@@ -183,12 +186,12 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   const pairs = new Map<string, Cell[]>();
   for (const g of cells.filter(c => c.objectIds.length > 1)) for (let a = 0; a < g.objectIds.length; a++) for (let b = a + 1; b < g.objectIds.length; b++) { const p = [g.objectIds[a], g.objectIds[b]].sort().join('|'); pairs.set(p, [...(pairs.get(p) || []), { x: g.x, y: g.y }]); }
   for (const [pair, at] of pairs) { const ids = pair.split('|'); issue('solid_overlap', `${all.find(o => o.id === ids[0])?.label} and ${all.find(o => o.id === ids[1])?.label} share floor cells. Move one piece.`, ids, at); }
-  const blocked = new Set(cells.filter(c => c.objectIds.length || (c.x + 1) * unit > room.widthCm || (c.y + 1) * unit > room.depthCm).map(key));
+  const blocked = new Set(cells.filter(c => c.objectIds.length || !insideKeys.has(key(c))).map(key));
   const doors = room.openings.filter((o): o is Door => o.kind === 'door');
   if (doors.filter(o => o.entrance).length !== 1) issue('door_approach_blocked', 'Choose exactly one entrance door in room setup.');
   for (const opening of room.openings) {
-    const wallLength = opening.wall === 'north' || opening.wall === 'south' ? room.widthCm : room.depthCm;
-    if (opening.offsetCm < 0 || opening.offsetCm + opening.widthCm > wallLength) issue('out_of_room', `${opening.id} extends beyond its wall. Correct the opening offset or width in room setup.`, [opening.id]);
+    const segment = resolveWallSegment(room, opening);
+    if (!segment || opening.offsetCm < 0 || opening.offsetCm + opening.widthCm > segment.lengthCm) issue('out_of_room', `${opening.id} is not contained by its wall segment. Correct the segment, offset, or width in room setup.`, [opening.id]);
     const { reserve, leaf } = openingMasks(room, opening, rules);
     if (opening.kind === 'door') {
       if (opening.mechanism !== 'hinged') issue('unsupported_opening', `${opening.id}: ${opening.mechanism} doors are not modelled. Choose a supported hinged fixture or revise this room outside V1.`, [opening.id]);
@@ -206,7 +209,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     } else {
       flag(reserve, 'window_envelope');
       const envelopeIds = occupants(reserve); if (envelopeIds.length) issue('window_envelope_blocked', 'Furniture occupies the conservative side-hinge window envelope.', [opening.id, ...envelopeIds], reserve, 'block', ['window_envelope']);
-      const band = rectCells(wallBand(room, opening.wall, opening.offsetCm, opening.widthCm, rules.windowFrontCm), unit);
+      const band = rectCells(wallBand(room, opening.wall, opening.offsetCm, opening.widthCm, rules.windowFrontCm, opening.segmentId), unit);
       const ids = occupants(band).filter(id => { const o = all.find(o => o.id === id)!; return o.sizeCm.h === null || (o.elevationCm < opening.headCm && o.elevationCm + o.sizeCm.h > opening.sillCm); });
       if (ids.length) issue('window_sill_collision', `Furniture in the ${rules.windowFrontCm} cm window-front band overlaps the sill-to-head height. Move it away from this band.`, [opening.id, ...ids], band);
       if (opening.type === 'unknown') issue('window_opening_unverified', 'Window mechanism is unknown. The sill policy was checked; the opening envelope was not verified.', [opening.id], band, 'warning');
@@ -222,9 +225,9 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   // with its keep-out band measured against empty air. Re-check the invariant
   // rather than trusting the record that set it.
   for (const f of room.fixtures.filter(f => f.wallAnchor)) {
-    const b = bounds(f, unit), wall = f.wallAnchor!.wall;
-    const gap = wall === 'west' ? b.x : wall === 'east' ? room.widthCm - (b.x + b.w) : wall === 'north' ? b.y : room.depthCm - (b.y + b.d);
-    if (gap > 1) issue('fixture_anchor_detached', `${f.label} is anchored to the ${wall} wall but stands ${Math.round(gap)} cm off it, so its clearance is measured in the wrong place. Reselect its wall in room inputs.`, [f.id], rectCells(b, unit).filter(c => lookup.has(key(c))), 'warning');
+    const b = bounds(f, unit), wall = f.wallAnchor!.wall, along = wall === 'north' || wall === 'south' ? b.w : b.d, depth = wall === 'north' || wall === 'south' ? b.d : b.w;
+    const expected = wallRect(room, f.wallAnchor!, along, depth), detached = !expected || Math.abs(b.x - expected.x) > 1 || Math.abs(b.y - expected.y) > 1;
+    if (detached) issue('fixture_anchor_detached', `${f.label} no longer matches its ${f.wallAnchor!.segmentId || wall} wall anchor, so its clearance is measured in the wrong place. Reselect its wall in room inputs.`, [f.id], rectCells(b, unit).filter(c => lookup.has(key(c))), 'warning');
   }
   // A rule keyed to a rule constant can be switched off outright by a legal
   // setConstraints value. That remains the human's choice, but it must not be
@@ -252,7 +255,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     addZone(`fixture:${fixture.id}`, fixture.id, fixture.clearance!.label, rect, true, 'fixed_fixture_approach', false);
     if (!ids.length && !zones.at(-1)!.reachable) issue('fixture_clearance_unreachable', `${fixture.label} concept approach is not reachable from the entrance.`, [fixture.id], at, 'block', ['fixture_clearance_unreachable']);
   }
-  for (const door of doors) addZone(`approach:${door.id}`, door.id, door.entrance ? 'Entrance' : 'Door approach', wallBand({ ...room, widthCm: Math.floor(room.widthCm / unit) * unit, depthCm: Math.floor(room.depthCm / unit) * unit }, door.wall, door.offsetCm, door.widthCm, hardSize * unit));
+  for (const door of doors) addZone(`approach:${door.id}`, door.id, door.entrance ? 'Entrance' : 'Door approach', wallBand(room, door.wall, door.offsetCm, door.widthCm, hardSize * unit, door.segmentId), true);
   for (const o of layout.furniture) {
     if (o.linkedDeskId && !layout.furniture.some(d => d.id === o.linkedDeskId && d.kind === 'desk')) issue('link_dangling', `${o.label} is still linked to a desk that is no longer in this layout. Relink it or clear the link.`, [o.id], [], 'warning');
     if (o.kind === 'sofa') {
@@ -292,14 +295,20 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       if (o.tags.includes('bedside') && !zones.at(-1)!.reachable) issue('bedside_route_conflict', `${o.label} drawer/front approach conflicts with the entrance route.`, [o.id], at, 'warning');
       if (o.kind === 'desk' && rules.deskNearWindow) {
         const b = bounds(o, unit), cx = b.x + b.w / 2, cy = b.y + b.d / 2;
-        const near = room.openings.some(w => w.kind === 'window' && (w.wall === 'west' ? cx <= 160 && cy >= w.offsetCm - 100 && cy <= w.offsetCm + w.widthCm + 100 : w.wall === 'east' ? room.widthCm - cx <= 160 && cy >= w.offsetCm - 100 && cy <= w.offsetCm + w.widthCm + 100 : w.wall === 'north' ? cy <= 160 && cx >= w.offsetCm - 100 && cx <= w.offsetCm + w.widthCm + 100 : room.depthCm - cy <= 160 && cx >= w.offsetCm - 100 && cx <= w.offsetCm + w.widthCm + 100));
+        const near = room.openings.some(w => {
+          if (w.kind !== 'window') return false;
+          const segment = resolveWallSegment(room, w); if (!segment) return false;
+          const along = segment.horizontal ? cx - segment.x1 : cy - segment.y1;
+          const inward = w.wall === 'north' ? cy - segment.y1 : w.wall === 'south' ? segment.y1 - cy : w.wall === 'west' ? cx - segment.x1 : segment.x1 - cx;
+          return inward >= 0 && inward <= 160 && along >= w.offsetCm - 100 && along <= w.offsetCm + w.widthCm + 100;
+        });
         if (!near) issue('prefer_desk_window', 'The desk is more than the demo near-window range from an opening. This preference does not block Apply.', [o.id], [], 'warning');
       }
     }
     if (o.kind === 'bed') {
       const depth = rules.bedLongSideAccessCm, bands = bedAccessBands(o, depth, 60, unit);
       const vertical = opposite[faces[o.rotation]] === 'north' || opposite[faces[o.rotation]] === 'south';
-      const valid = bands.filter(({ rect }) => rect.x >= 0 && rect.y >= 0 && rect.x + rect.w <= room.widthCm && rect.y + rect.d <= room.depthCm && (vertical ? rect.d : rect.w) >= 100 && occupants(rectCells(rect, unit)).length === 0);
+      const valid = bands.filter(({ rect }) => rectInsideRoom(room, rect) && (vertical ? rect.d : rect.w) >= 100 && occupants(rectCells(rect, unit)).length === 0);
       for (const band of bands) flag(rectCells(band.rect, unit).filter(c => lookup.has(key(c))), valid.some(v => v.side === band.side) ? 'bed_long_side_candidate' : 'bed_long_side_blocked');
       // Keep both candidate bands in the report. Invalid/occupied bands render
       // as red unreachable chips instead of vanishing from the room review.
@@ -311,13 +320,14 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       else { flag(reachable.flatMap(z => z.cells), 'bed_long_side_clear'); if (reachable.length < 2) issue('prefer_bed_two_sides', 'A second reachable bed side is preferred when the room permits it.', [o.id], [], 'warning', ['bed_long_side_blocked']); }
     }
   }
-  for (const w of room.openings) if (w.kind === 'window' && w.windowAccess) addZone(`window:${w.id}`, w.id, 'Requested window access', wallBand(room, w.wall, w.offsetCm, w.widthCm, hardSize * unit));
+  for (const w of room.openings) if (w.kind === 'window' && w.windowAccess) addZone(`window:${w.id}`, w.id, 'Requested window access', wallBand(room, w.wall, w.offsetCm, w.widthCm, hardSize * unit, w.segmentId));
   for (const tv of layout.furniture.filter(o => o.kind === 'tv')) {
     if (!tv.wallAnchor) { issue('tv_unassociated', 'A TV must have a wall anchor and a target sofa.', [tv.id]); continue; }
-    const { wall, offsetCm } = tv.wallAnchor, wallLength = wall === 'north' || wall === 'south' ? room.widthCm : room.depthCm;
-    if (offsetCm < 0 || offsetCm + tv.sizeCm.w > wallLength) issue('out_of_room', 'The TV extends beyond its wall. Adjust its wall offset.', [tv.id]);
-    const wallIntervals: { id: string; offset: number; width: number; low: number; high: number }[] = room.openings.filter(w => w.wall === wall).map(w => ({ id: w.id, offset: w.offsetCm, width: w.widthCm, low: w.kind === 'window' ? w.sillCm : 0, high: w.kind === 'window' ? w.headCm : rules.ceilingCm }));
-    for (const other of all.filter(o => o.id !== tv.id && o.wallAnchor?.wall === wall)) wallIntervals.push({ id: other.id, offset: other.wallAnchor!.offsetCm, width: other.kind === 'radiator' ? (wall === 'east' || wall === 'west' ? bounds(other).d : bounds(other).w) : other.sizeCm.w, low: other.elevationCm, high: other.sizeCm.h === null ? rules.ceilingCm : other.elevationCm + other.sizeCm.h });
+    const { wall, offsetCm, segmentId } = tv.wallAnchor, segment = resolveWallSegment(room, tv.wallAnchor);
+    if (!segment || offsetCm < 0 || offsetCm + tv.sizeCm.w > segment.lengthCm) issue('out_of_room', 'The TV extends beyond its wall segment. Adjust its wall anchor.', [tv.id]);
+    const sameSurface = (anchor: { wall: Wall; segmentId?: string }) => room.floorPlan ? anchor.segmentId === segmentId : anchor.wall === wall;
+    const wallIntervals: { id: string; offset: number; width: number; low: number; high: number }[] = room.openings.filter(w => sameSurface(w)).map(w => ({ id: w.id, offset: w.offsetCm, width: w.widthCm, low: w.kind === 'window' ? w.sillCm : 0, high: w.kind === 'window' ? w.headCm : rules.ceilingCm }));
+    for (const other of all.filter(o => o.id !== tv.id && o.wallAnchor && sameSurface(o.wallAnchor))) wallIntervals.push({ id: other.id, offset: other.wallAnchor!.offsetCm, width: other.kind === 'radiator' ? (wall === 'east' || wall === 'west' ? bounds(other).d : bounds(other).w) : other.sizeCm.w, low: other.elevationCm, high: other.sizeCm.h === null ? rules.ceilingCm : other.elevationCm + other.sizeCm.h });
     for (const interval of wallIntervals) if (offsetCm < interval.offset + interval.width && offsetCm + tv.sizeCm.w > interval.offset && tv.elevationCm < interval.high && (tv.sizeCm.h === null || tv.elevationCm + tv.sizeCm.h > interval.low)) issue('wall_attachment_overlap', 'The TV overlaps another wall attachment in both wall position and height. Move its wall anchor.', [tv.id, interval.id]);
     const sofa = layout.furniture.find(o => o.id === tv.targetSofaId && o.kind === 'sofa');
     if (!sofa) { issue('tv_unassociated', 'Select a sofa for the wall TV in the inspector.', [tv.id]); continue; }
@@ -325,8 +335,8 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     const b = bounds(sofa, unit), face = faces[sofa.rotation];
     const seating: Rect = face === 'north' ? { ...b, d: Math.min(unit, b.d) } : face === 'south' ? { ...b, y: b.y + b.d - unit, d: unit } : face === 'west' ? { ...b, w: unit } : { ...b, x: b.x + b.w - unit, w: unit };
     const seatCells = rectCells(seating, unit), seatSet = new Set(seatCells.map(key));
-    const depth = wall === 'north' ? seating.y + seating.d : wall === 'south' ? room.depthCm - seating.y : wall === 'west' ? seating.x + seating.w : room.widthCm - seating.x;
-    const strip = rectCells(wallBand(room, wall, offsetCm, tv.sizeCm.w, Math.max(0, depth)), unit).filter(c => lookup.has(key(c))), stripSet = new Set(strip.map(key));
+    const depth = !segment ? 0 : wall === 'north' ? seating.y + seating.d - segment.y1 : wall === 'south' ? segment.y1 - seating.y : wall === 'west' ? seating.x + seating.w - segment.x1 : segment.x1 - seating.x;
+    const strip = rectCells(wallBand(room, wall, offsetCm, tv.sizeCm.w, Math.max(0, depth), segmentId), unit).filter(c => insideKeys.has(key(c))), stripSet = new Set(strip.map(key));
     const blockedCells: Cell[] = [], unknown: Cell[] = [];
     for (const c of strip) {
       const g = lookup.get(key(c))!;
@@ -396,7 +406,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   const moveFix = (o: Furniture, x: number, y: number, summary: string) => {
     const b = bounds(o, unit);
     const t = { x: Math.round(x / unit) * unit, y: Math.round(y / unit) * unit, w: b.w, d: b.d };
-    const inRoom = t.x >= 0 && t.y >= 0 && t.x + t.w <= room.widthCm && t.y + t.d <= room.depthCm;
+    const inRoom = rectInsideRoom(room, t);
     const clashes = isSolid(o) && all.some(f => {
       if (f.id === o.id || !isSolid(f)) return false;
       const a = bounds(f, unit);
@@ -439,9 +449,13 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     if (o.kind === 'sofa') {
       const front = faces[o.rotation], horizontal = front === 'north' || front === 'south';
       const start = horizontal ? b.x : b.y, end = horizontal ? b.x + b.w : b.y + b.d;
-      const spans = (offset: number, width: number) => offset < end && offset + width > start;
-      const outlook = room.openings.some(w => w.wall === front && spans(w.offsetCm, w.widthCm))
-        || layout.furniture.some(t => t.kind === 'tv' && t.wallAnchor?.wall === front && spans(t.wallAnchor.offsetCm, t.sizeCm.w));
+      const spans = (anchor: { wall: Wall; segmentId?: string; offsetCm: number }, width: number) => {
+        const segment = resolveWallSegment(room, anchor); if (!segment) return false;
+        const offset = (horizontal ? segment.x1 : segment.y1) + anchor.offsetCm;
+        return offset < end && offset + width > start;
+      };
+      const outlook = room.openings.some(w => w.wall === front && spans(w, w.widthCm))
+        || layout.furniture.some(t => t.kind === 'tv' && t.wallAnchor?.wall === front && spans(t.wallAnchor, t.sizeCm.w));
       if (!outlook && g[front] >= 0 && g[front] <= SOFA_OUTLOOK_CM && g[back] - g[front] >= SOFA_OUTLOOK_CM) issue('prefer_sofa_into_room', `${o.label} looks at a blank ${front} wall ${Math.round(g[front])} cm away, with ${Math.round(g[back])} cm of room behind it. Turn it to face into the room.`, [o.id], [], 'warning', [], turnFix(o, back, `Turn it to face the ${back} side of the room`));
     }
 
@@ -459,7 +473,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     // A near miss reads as a mistake; flush or clearly away is intentional.
     if (!isBedside && o.kind !== 'rug') {
       const near = (Object.keys(g) as Wall[]).filter(w => g[w] > 0 && g[w] <= 25).sort((a, c) => g[a] - g[c])[0];
-      if (near) issue('prefer_flush_to_wall', `${o.label} sits ${Math.round(g[near])} cm from the ${near} wall — close enough to look unintended.`, [o.id], [], 'warning', [], moveFix(o, near === 'west' ? 0 : near === 'east' ? room.widthCm - b.w : b.x, near === 'north' ? 0 : near === 'south' ? room.depthCm - b.d : b.y, `Push flush to the ${near} wall`));
+      if (near) issue('prefer_flush_to_wall', `${o.label} sits ${Math.round(g[near])} cm from the ${near} wall — close enough to look unintended.`, [o.id], [], 'warning', [], room.floorPlan ? { tool: 'findPlacements', args: { objectId: o.id }, summary: `Find a checked flush placement on a ${near}-facing segment` } : moveFix(o, near === 'west' ? 0 : near === 'east' ? room.widthCm - b.w : b.x, near === 'north' ? 0 : near === 'south' ? room.depthCm - b.d : b.y, `Push flush to the ${near} wall`));
     }
 
     // A bedside table belongs beside the head of a bed, not merely near it.
@@ -497,7 +511,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     if (o.tags.includes('all-side-clearance')) {
       const depth = rules.chairPullCm, outer = { x: b.x - depth, y: b.y - depth, w: b.w + depth * 2, d: b.d + depth * 2 };
       const ring = rectCells(outer, unit).filter(c => !rectCells(b, unit).some(own => own.x === c.x && own.y === c.y));
-      const ids = occupants(ring, [o.id]), clipped = outer.x < 0 || outer.y < 0 || outer.x + outer.w > room.widthCm || outer.y + outer.d > room.depthCm;
+      const ids = occupants(ring, [o.id]), clipped = !rectInsideRoom(room, outer);
       if (ids.length || clipped) issue('meeting_table_clearance', `${o.label} needs ${depth} cm of chair space on every side.`, [o.id, ...ids], ring.filter(c => lookup.has(key(c))), 'warning', ['chair_pull_blocked'], { tool: 'findPlacements', args: { objectId: o.id }, summary: 'Search for all-side meeting-table clearance' });
     }
   }
@@ -505,7 +519,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   // Furniture bunched into one end of a long room passes every hard rule and
   // still reads as wrong. Flag it when a big contiguous void survives.
   if (layout.furniture.length >= 3) {
-    const voidM2 = largestEmptyRectangle(columns, rows, blocked, unit), roomM2 = room.widthCm * room.depthCm / 10000;
+    const voidM2 = largestEmptyRectangle(columns, rows, blocked, unit), roomM2 = floorAreaM2(room);
     if (voidM2 > roomM2 * 0.45) issue('prefer_even_distribution', `${voidM2.toFixed(1)} m² of the ${roomM2.toFixed(1)} m² floor is one empty block; the furniture is bunched into part of the room.`, layout.furniture.map(f => f.id), [], 'info', [], { tool: 'proposeLayout', args: {}, summary: 'Re-plan to spread the pieces' });
   }
 

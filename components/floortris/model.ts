@@ -1,5 +1,8 @@
 export type Cell = { x: number; y: number };
+export type FloorPoint = { xCm: number; yCm: number };
+export type FloorPlan = { kind: 'rectilinear'; points: FloorPoint[] };
 export type Wall = 'north' | 'east' | 'south' | 'west';
+export type WallAnchor = { wall: Wall; offsetCm: number; segmentId?: string };
 export type Kind = 'sofa' | 'chair' | 'table' | 'coffee_table' | 'desk' | 'storage' | 'bed' | 'tv' | 'rug' | 'plant' | 'radiator' | 'basin' | 'toilet' | 'shower' | 'bath' | 'towel_rail' | 'other';
 export type RoomProfile =
   | { kind: 'lounge' }
@@ -14,16 +17,16 @@ export type Furniture = {
   sizeCm: Size; rotation: Rotation; originCell: Cell; variantId?: string;
   /** Catalogue-local back edge before rotation. Defaults to north. */
   backEdge?: Wall;
-  elevationCm: number; wallAnchor?: { wall: Wall; offsetCm: number };
+  elevationCm: number; wallAnchor?: WallAnchor;
   locked: { position?: boolean; size?: boolean; rotation?: boolean; appearance?: boolean };
   appearance: string; requiredInRoom: boolean; targetSofaId?: string; linkedDeskId?: string;
   tags: string[]; sleepSize?: 'single' | 'double' | 'king'; conceptualOnly?: boolean; clearance?: { label: string; rect: Rect };
 };
-export type Door = { id: string; kind: 'door'; wall: Wall; offsetCm: number; widthCm: number; hinge: 'start' | 'end'; swing: 'in' | 'out'; angle: 90; mechanism: 'hinged' | 'pocket' | 'bifold' | 'sliding'; entrance: boolean };
-export type WindowOpening = { id: string; kind: 'window'; wall: Wall; offsetCm: number; widthCm: number; sillCm: number; headCm: number; type: 'fixed' | 'side_hinge' | 'sash' | 'unknown'; windowAccess: boolean };
+export type Door = { id: string; kind: 'door'; wall: Wall; segmentId?: string; offsetCm: number; widthCm: number; hinge: 'start' | 'end'; swing: 'in' | 'out'; angle: 90; mechanism: 'hinged' | 'pocket' | 'bifold' | 'sliding'; entrance: boolean };
+export type WindowOpening = { id: string; kind: 'window'; wall: Wall; segmentId?: string; offsetCm: number; widthCm: number; sillCm: number; headCm: number; type: 'fixed' | 'side_hinge' | 'sash' | 'unknown'; windowAccess: boolean };
 export type Opening = Door | WindowOpening;
 export type FixedFixture = Furniture & { ownership: 'fixed'; kind: FixedFixtureKind; conceptualOnly?: boolean; clearance?: { label: string; rect: Rect } };
-export type Room = { name: string; widthCm: number; depthCm: number; openings: Opening[]; fixtures: Furniture[]; openingLocks?: string[]; profile?: RoomProfile };
+export type Room = { name: string; widthCm: number; depthCm: number; floorPlan?: FloorPlan; openings: Opening[]; fixtures: Furniture[]; openingLocks?: string[]; profile?: RoomProfile };
 export type Rules = { cellCm: 20; H_lowCm: number; walkHardCm: number; walkPreferredCm: number; storageFrontCm: number; chairPullCm: number; bedLongSideAccessCm: number; radiatorFrontCm: number; windowFrontCm: number; ceilingCm: number; requiredKinds: Kind[]; deskNearWindow: boolean; openFloorM2: number };
 export type Layout = { furniture: Furniture[]; appearance: { wall: string; floor: string } };
 export type Omission = { objectId?: string; variantId?: string; reason: string; alternativeVariantId?: string; alternativeChecked?: { trials: number; placementStatus: string; layoutStatus: string; proposalRevision: number; ruleRevision: number } };

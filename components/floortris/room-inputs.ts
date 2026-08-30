@@ -1,19 +1,22 @@
 import { clone, type AppState, type Furniture, type Room, type RoomProfile, type Rules, type Wall } from './model.ts';
 import { openingSchema, TOOL_SCHEMAS, validateSchema } from './schemas.ts';
+import { floorPlanError, rectInsideRoom, resolveWallSegment, wallRect } from './floorplan.ts';
 
 export const walls: Wall[] = ['north', 'east', 'south', 'west'];
 export const horizontalWall = (wall: Wall) => wall === 'north' || wall === 'south';
-export const wallLength = (room: Room, wall: Wall) => horizontalWall(wall) ? room.widthCm : room.depthCm;
+export const wallLength = (room: Room, wall: Wall, segmentId?: string) => resolveWallSegment(room, { wall, segmentId })?.lengthCm || 0;
 export const roomEditStamp = (s: AppState) => `${s.currentRevision}:${s.ruleRevision}:${s.proposal?.id || ''}:${s.proposal?.revision || 0}`;
 export const radiatorMeasures = (f: Furniture) => ({ width: horizontalWall(f.wallAnchor?.wall || 'east') ? f.sizeCm.w : f.sizeCm.d, depth: horizontalWall(f.wallAnchor?.wall || 'east') ? f.sizeCm.d : f.sizeCm.w });
 
 /** A fixed fixture keeps its exact measured floor projection, even between grid lines. */
-export function radiatorOnWall(f: Furniture, room: Room, wall: Wall, offsetCm: number, width: number, depth: number, height: number): Furniture {
+export function radiatorOnWall(f: Furniture, room: Room, wall: Wall, offsetCm: number, width: number, depth: number, height: number, segmentId?: string): Furniture {
   const horizontal = horizontalWall(wall);
+  const anchor = { wall, offsetCm, ...(segmentId ? { segmentId } : {}) };
+  const projection = wallRect(room, anchor, width, depth) || { x: 0, y: 0 };
   return { ...clone(f), ownership: 'fixed', kind: 'radiator', rotation: 0, elevationCm: 0,
     sizeCm: { w: horizontal ? width : depth, d: horizontal ? depth : width, h: height },
-    originCell: { x: (horizontal ? offsetCm : wall === 'east' ? room.widthCm - depth : 0) / 20, y: (horizontal ? wall === 'south' ? room.depthCm - depth : 0 : offsetCm) / 20 },
-    wallAnchor: { wall, offsetCm } };
+    originCell: { x: projection.x / 20, y: projection.y / 20 },
+    wallAnchor: anchor };
 }
 
 const conceptKinds = new Set(['basin', 'toilet', 'shower', 'bath', 'towel_rail']);
@@ -49,19 +52,22 @@ function fixtureError(f: Furniture, room: Room, rules: Rules) {
   if (!conceptKinds.has(f.kind)) return `${f.label}: unsupported fixed fixture kind.`;
   if (f.conceptualOnly !== true) return `${f.label}: concept fixtures require the conceptual-only marker.`;
   const turned = f.rotation === 90 || f.rotation === 270, footprint = { x: f.originCell.x * 20, y: f.originCell.y * 20, w: turned ? f.sizeCm.d : f.sizeCm.w, d: turned ? f.sizeCm.w : f.sizeCm.d };
-  if (footprint.x < 0 || footprint.y < 0 || footprint.x + footprint.w > room.widthCm || footprint.y + footprint.d > room.depthCm) return `${f.label} extends beyond the room.`;
+  if (!rectInsideRoom(room, footprint)) return `${f.label} extends beyond the room.`;
   if (f.wallAnchor) {
-    const { wall, offsetCm } = f.wallAnchor;
+    const { wall, offsetCm, segmentId } = f.wallAnchor;
     if (!walls.includes(wall) || !finite(offsetCm) || offsetCm < 0) return `${f.label}: choose a wall and non-negative anchor offset.`;
+    const segment = resolveWallSegment(room, f.wallAnchor);
+    if (!segment || (room.floorPlan && !segmentId)) return `${f.label}: choose a valid custom wall segment as well as its facing direction.`;
     const expectedRotation = ({ north: 0, east: 90, south: 180, west: 270 } as const)[wall];
-    const expected = { x: (wall === 'east' ? room.widthCm - footprint.w : wall === 'west' ? 0 : offsetCm) / 20, y: (wall === 'south' ? room.depthCm - footprint.d : wall === 'north' ? 0 : offsetCm) / 20 };
     const along = horizontalWall(wall) ? footprint.w : footprint.d;
-    if (offsetCm + along > wallLength(room, wall) || f.rotation !== expectedRotation || f.originCell.x !== expected.x || f.originCell.y !== expected.y) return `${f.label} no longer matches its wall anchor. Clear the anchor for a free pose or reselect the wall.`;
+    const depth = horizontalWall(wall) ? footprint.d : footprint.w, expectedRect = wallRect(room, f.wallAnchor, along, depth);
+    const expected = expectedRect && { x: expectedRect.x / 20, y: expectedRect.y / 20 };
+    if (offsetCm + along > segment.lengthCm || f.rotation !== expectedRotation || !expected || f.originCell.x !== expected.x || f.originCell.y !== expected.y) return `${f.label} no longer matches its wall anchor. Clear the anchor for a free pose or reselect the wall.`;
   }
   if (accessFixtureKinds.has(f.kind)) {
     const c = f.clearance;
     if (!c || typeof c.label !== 'string' || !c.label.trim() || !c.rect || !positive(c.rect.w) || !positive(c.rect.d) || !finite(c.rect.x) || !finite(c.rect.y)) return `${f.label}: add a finite labelled concept approach zone.`;
-    if (c.rect.x < 0 || c.rect.y < 0 || c.rect.x + c.rect.w > room.widthCm || c.rect.y + c.rect.d > room.depthCm) return `${f.label}: concept approach extends beyond the room.`;
+    if (!rectInsideRoom(room, c.rect)) return `${f.label}: concept approach extends beyond the room.`;
     if (intersects(footprint, c.rect)) return `${f.label}: concept approach must stay outside its solid fixture footprint.`;
   } else if (f.clearance !== undefined) return `${f.label}: towel rails do not use an automatic concept approach zone.`;
   return null;
@@ -72,6 +78,7 @@ export function validateRoomInputs(room: Room, rules: Rules): string | null {
   const geometry = validateSchema({ proposalId: 'human', revision: 1, name: room.name, widthCm: room.widthCm, depthCm: room.depthCm }, TOOL_SCHEMAS.setRoomGeometry.inputSchema);
   if (geometry) return `Room: ${geometry}`;
   if (!room.name.trim()) return 'Give the room a name.';
+  const outline = floorPlanError(room.floorPlan, room.widthCm, room.depthCm); if (outline) return `Room outline: ${outline}`;
   const { cellCm, ...constraints } = rules;
   if (cellCm !== 20) return 'The grid must remain 20 cm.';
   const ruleError = validateSchema({ proposalId: 'human', revision: 1, constraints }, TOOL_SCHEMAS.setConstraints.inputSchema);
@@ -85,16 +92,25 @@ export function validateRoomInputs(room: Room, rules: Rules): string | null {
   if (!room.openings.some(o => o.kind === 'door' && o.entrance)) return 'Mark at least one door as an entrance for the footpath check.';
   for (const o of room.openings) {
     const error = validateSchema(o, openingSchema); if (error) return `${o.id}: ${error}`;
-    if (o.offsetCm + o.widthCm > wallLength(room, o.wall)) return `${o.id} extends beyond the ${o.wall} wall.`;
+    const segment = resolveWallSegment(room, o);
+    if (!segment || (room.floorPlan && !o.segmentId)) return `${o.id}: choose a valid custom wall segment whose outward direction is ${o.wall}.`;
+    if (o.offsetCm + o.widthCm > segment.lengthCm) return `${o.id} extends beyond ${segment.id} (${o.wall}).`;
     if (o.kind === 'window' && (o.headCm <= o.sillCm || o.headCm > rules.ceilingCm)) return `${o.id}: window head must be above the sill and at or below the ceiling.`;
   }
   for (const f of room.fixtures) {
     const structural = fixtureError(f, room, rules); if (structural) return structural;
     if (f.kind !== 'radiator') continue;
     if (!f.wallAnchor || !walls.includes(f.wallAnchor.wall) || !Number.isFinite(f.wallAnchor.offsetCm) || f.wallAnchor.offsetCm < 0) return `${f.label}: choose a wall and non-negative offset.`;
-    const m = radiatorMeasures(f), canonical = radiatorOnWall(f, room, f.wallAnchor.wall, f.wallAnchor.offsetCm, m.width, m.depth, f.sizeCm.h!);
-    if (f.wallAnchor.offsetCm + m.width > wallLength(room, f.wallAnchor.wall) || m.depth > wallLength(room, horizontalWall(f.wallAnchor.wall) ? 'east' : 'north')) return `${f.label} extends beyond the room.`;
+    const segment = resolveWallSegment(room, f.wallAnchor);
+    if (!segment || (room.floorPlan && !f.wallAnchor.segmentId)) return `${f.label}: choose a valid custom wall segment.`;
+    const m = radiatorMeasures(f), canonical = radiatorOnWall(f, room, f.wallAnchor.wall, f.wallAnchor.offsetCm, m.width, m.depth, f.sizeCm.h!, f.wallAnchor.segmentId);
+    if (f.wallAnchor.offsetCm + m.width > segment.lengthCm || !rectInsideRoom(room, boundsForFixture(canonical))) return `${f.label} extends beyond the room.`;
     if (f.rotation !== 0 || f.elevationCm !== 0 || f.originCell.x !== canonical.originCell.x || f.originCell.y !== canonical.originCell.y) return `${f.label} no longer touches its wall. Unpin it and reselect its wall after resizing the room.`;
   }
   return null;
+}
+
+function boundsForFixture(f: Furniture) {
+  const turned = f.rotation === 90 || f.rotation === 270;
+  return { x: f.originCell.x * 20, y: f.originCell.y * 20, w: turned ? f.sizeCm.d : f.sizeCm.w, d: turned ? f.sizeCm.w : f.sizeCm.d };
 }

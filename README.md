@@ -13,6 +13,11 @@ human's existing planner tab, exact centimetre inputs, verification, existing-ro
 edits, and local-only room links. It does not register tools itself or invent a
 runtime-specific discovery command. Read the tool schema on the planner tab.
 
+Agents can also translate a dimensioned sketch into a custom rectilinear outline.
+`generateRoom.floorPlan.points` records each L-shape, recess or nook corner from a
+top-left origin; the page derives named wall segments, validates the polygon, and
+uses the resulting boundary in 2D, 3D, openings, furniture fit and walking routes.
+
 All registered tool descriptions repeat the human approval boundary. Generation
 returns a `review` record with `applied: false`, `requiresHumanApply: true`, and a
 revision-bound `checkLayout` call. Agents should verify the visible room and report
@@ -77,7 +82,7 @@ npm run test:native -- https://floortris.floortris.workers.dev/
 
 It launches Chrome with the required flags, asserts all 15 tools register and
 carry annotations, then exercises the `generateRoom` hero flow through
-`document.modelContext.executeTool`: a new bedroom proposal is generated,
+`document.modelContext.executeTool`: a new custom-outline proposal is generated,
 checked, and verified to remain human-Apply-only. It also confirms stale writes
 are refused and that Apply, Confirm, Discard and Unlock are not native tools.
 
@@ -96,7 +101,7 @@ JSON string. Passing a tool name, a plain object, or `{arguments: ...}` fails wi
 
 - `app/`: application entry and site metadata; `middleware.ts` supplies the platform-routed request origin for absolute social-card URLs, without trusting forwarded host headers.
 - `components/floortris/FloortrisApp.tsx` and `floortris.css`: board, manual editing, measured-owned entry, catalogue, proposals/comparison, setup review, and exact-revision Apply.
-- `components/floortris/model.ts`, `data.ts`, `engine.ts`: domain model, sample catalogue, and pure shared rules.
+- `components/floortris/model.ts`, `floorplan.ts`, `data.ts`, `engine.ts`: domain model, rectilinear polygon geometry, sample catalogue, and pure shared rules.
 - `components/floortris/schemas.ts`, `store.ts`, `webmcp.ts`: strict tool schemas, authoritative commands, and native registration.
 - Tests in `components/floortris/` cover the shared engine, command authority, native adapter, rendering geometry, room input editing and history. Run `npm test` for the current count.
 
@@ -198,7 +203,7 @@ The provided demo takes **four checked placements**: wall TV, compact desk, low 
 - Fixed fixture clearances report one primary cause: occupied, or unreachable when unoccupied. The general route rule does not duplicate the same failed fixture zone.
 - Window height checks are limited to a configured front band and sill-to-head interval. Unknown types warn that opening behavior is unverified. Side hinges use a **conservative full-depth rectangle**, not an exact dynamic sash model. Fixed and sash windows have no invented inward envelope.
 - Fixed radiator projection and its 20 cm front assumption are separate masks. The human Room Editor can add, remove, measure and pin radiators, doors and windows. Changes are staged and require confirmation. Agent furniture commands cannot edit fixed fixtures; accepted opening pins cannot be overridden by agent setup commands.
-- Rectangular rooms only, up to 1000 × 1000 cm, 12 openings and 30 movable pieces. Interactive dragging, occupancy and flood-fill stay on fixed 20 cm cells; checked placements may use fractional cell coordinates to preserve exact measured wall gaps. Quarter turns only. No chimney/cutout editor, multi-room layout, stairs or diagonal paths.
+- Rectangular or custom rectilinear rooms (L-shapes, nooks and recesses), within a 1000 × 1000 cm bounding box, up to 24 wall corners, 12 openings and 30 movable pieces. Custom points must form one simple orthogonal polygon; curved/diagonal walls, holes, multi-room layouts and stairs remain unsupported. Interactive dragging, occupancy and flood-fill stay on fixed 20 cm cells; checked placements may use fractional cell coordinates to preserve exact measured wall gaps. Quarter turns only. The agent supplies measured custom points through WebMCP; V1 does not include a manual polygon-drawing tool.
 - Storage uses a front rectangle, not a modelled articulated door. Meeting tables use a conservative all-side chair-clearance ring. Bed long-side clearance is a secondary simple check; it cannot bypass the hard walking footprint.
 - Furniture appearance is editable in the human inspector. Wall and floor finishes are editable there too, in the room panel shown when no piece is selected, through the same palette IDs `setAppearance` accepts. Appearance never changes geometry, height classes or rule flags, but it does advance the revision a reviewer must have seen before Apply.
 - A stale draft must be discarded and recreated. There is no automatic rebase. Only one active setup/layout draft is supported at once. Undo/redo holds up to 50 complete document states for the current session. Restoring content advances authority revisions and issues fresh proposal IDs, so old agent commands and Apply buttons do not regain validity.
@@ -299,6 +304,13 @@ complete `openings` (including an entrance door), and `idempotencyKey`. Supporte
 profiles are lounge, bedroom and home_office. Optional `appearance`, `variantIds`
 and `quantities` select palette IDs and named furniture variants. Bathroom
 concept fixtures still use their existing human room-input workflow.
+
+For a dimensioned L-shape or nook, add `floorPlan: { kind: "rectilinear",
+points: [...] }`. Coordinates are centimetres from the bounding top-left, with x
+east and y south; points walk the perimeter and omit a duplicate closing point.
+The page derives `wall-1`, `wall-2`, etc. in edge order. Custom openings name a
+`segmentId` and its returned outward wall direction. `getRoomState.wallSegments`
+is authoritative for segment endpoints, length and direction.
 
 The tool uses the same bounded planner and rule engine, then atomically saves the
 previous document and the new document before switching. A failure to save,
