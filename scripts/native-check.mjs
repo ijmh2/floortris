@@ -18,7 +18,7 @@ const FLAGS = [
   '--enable-blink-features=WebMCP',
 ];
 const EXPECTED_TOOLS = [
-  'checkLayout', 'createProposal', 'findPlacements', 'generateRoom', 'getRoomState', 'listCatalogue',
+  'checkLayout', 'createCustomFurniture', 'createProposal', 'findPlacements', 'generateRoom', 'getRoomState', 'listCatalogue',
   'listFurniture', 'placeFurniture', 'proposeLayout', 'removeFurniture', 'setAppearance',
   'setConstraints', 'setOpening', 'setRoomGeometry', 'updateFurniture',
 ];
@@ -43,7 +43,7 @@ try {
   check('document.modelContext is exposed', hasApi, hasApi ? '' : 'is Chrome running with the WebMCP flags?');
   if (!hasApi) process.exit(1);
 
-  await page.waitForFunction(async () => (await document.modelContext.getTools()).length >= 15, null, { timeout: 20000 })
+  await page.waitForFunction(async () => (await document.modelContext.getTools()).length >= 16, null, { timeout: 20000 })
     .catch(() => {});
 
   const result = await page.evaluate(async (expected) => {
@@ -80,6 +80,12 @@ try {
       idempotencyKey: 'native-ceiling-' + Date.now(),
     });
     draft.revision = ceiling.revision;
+    const custom = await call('createCustomFurniture', {
+      ...draft, label: 'Native measured mat', kind: 'rug', widthCm: 37, depthCm: 29, heightCm: 1,
+      positionCm: { xCm: 40, yCm: 40 }, rotation: 0, appearance: 'clay',
+      idempotencyKey: 'native-custom-' + Date.now(),
+    });
+    draft.revision = custom.revision;
     const generatedRoom = await call('getRoomState', { which: 'proposal' });
     const fixtures = await call('listFurniture', { which: 'proposal' });
     const checked = await call('checkLayout', { which: 'proposal', detail: 'issues' });
@@ -98,8 +104,11 @@ try {
       customSegmentCount: generatedRoom.wallSegments?.length,
       blindSucceeded: blind.operationSucceeded,
       ceilingSucceeded: ceiling.operationSucceeded,
+      customSucceeded: custom.operationSucceeded,
+      customReview: custom.review,
       blindLinked: fixtures.furniture?.some(item => item.fixtureType === 'blind' && item.attachedOpeningId === 'native-window'),
       ceilingMounted: fixtures.furniture?.some(item => item.fixtureType === 'recessed' && item.kind === 'ceiling_light'),
+      customMeasured: fixtures.furniture?.some(item => item.ownership === 'custom' && item.label === 'Native measured mat' && item.sizeCm?.w === 37 && item.sizeCm?.d === 29 && item.sizeCm?.h === 1 && item.customProvenance?.tool === 'createCustomFurniture'),
     };
   }, EXPECTED_TOOLS);
 
@@ -112,6 +121,7 @@ try {
     `points=${result.customPointCount}, segments=${result.customSegmentCount}`);
   check('native blind attaches to its measured window', result.blindSucceeded && result.blindLinked);
   check('native recessed light mounts inside the custom ceiling', result.ceilingSucceeded && result.ceilingMounted);
+  check('native custom furniture preserves its measured envelope and proposal-only provenance', result.customSucceeded && result.customMeasured && result.customReview?.requiresHumanApply === true && result.customReview?.applied === false);
   check('generated proposal reaches ready_for_review', result.plannedStatus === 'ready_for_review', `status=${result.plannedStatus}`);
   check('generated layout has no hard failures', result.plannedBlocking === 0, `blocking=${result.plannedBlocking}`);
   // Soft warnings are expected and fine here: the L-shape exercises wall-backed

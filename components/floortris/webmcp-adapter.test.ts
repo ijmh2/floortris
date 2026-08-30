@@ -23,7 +23,7 @@ test('adapter awaits registration and its handlers share the real command store 
   const host={modelContext:{registerTool:async(tool:{name:string;execute:(args:Record<string,unknown>,options?:{signal?:AbortSignal})=>Promise<unknown>},options:{signal:AbortSignal})=>{await Promise.resolve();tools.set(tool.name,tool);signals.push(options.signal);}}};
   const observations:unknown[]=[];
   const dispose=registerFloortrisTools(store,s=>statuses.push(s),host as unknown as Document,r=>{observations.push(r);throw new Error('broken optional UI observer');});
-  assert.equal(statuses.at(-1)?.state,'checking');await tick();assert.equal(statuses.at(-1)?.state,'registered');assert.equal(tools.size,15);
+  assert.equal(statuses.at(-1)?.state,'checking');await tick();assert.equal(statuses.at(-1)?.state,'registered');assert.equal(tools.size,16);
   const current=store.getState();const result=await tools.get('createProposal')!.execute({kind:'layout',expectedCurrentRevision:current.currentRevision,expectedRuleRevision:current.ruleRevision,idempotencyKey:'adapter-create'}) as {operationSucceeded:boolean};
   assert.equal(result.operationSucceeded,true);assert.ok(store.getState().proposal);assert.deepEqual(observations,[result]);
   const before=JSON.stringify(store.getState());const ac=new AbortController();ac.abort();

@@ -7,6 +7,7 @@ import { profileRules } from './samples.ts';
 import { documentId } from './persistence.ts';
 import { anchorForDirection, rectInsideRoom, resolveWallSegment, wallRect, wallSegments } from './floorplan.ts';
 import { canSupportLamp, isFloorOccupant, LIGHT_KINDS, normalizeFixturePlacement } from './fixture-placement.ts';
+import { makeCustomFurniture } from './custom-furniture.ts';
 
 // All commands are checked against strict recursive schemas before this dispatcher reads dynamic keys.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema-validated JSON dispatch boundary; authoritative domain records remain strongly typed.
@@ -105,6 +106,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (patch.elevationCm !== undefined && locks.position && patch.elevationCm !== source.elevationCm) fail('lock_violation', 'The elevation is locked.');
     if (patch.rotation !== undefined && locks.rotation && patch.rotation !== source.rotation) fail('lock_violation', `${object.label} has a locked rotation.`);
     if (patch.variantId && object.ownership === 'owned') fail('owned_resize_forbidden', 'Owned dimensions cannot change through a catalogue variant.');
+    if (patch.variantId && object.ownership === 'custom') fail('custom_resize_forbidden', 'Agent-authored measured dimensions and semantic kind cannot change through a catalogue variant. Remove the object and create a new measured one instead.');
     if (patch.variantId && locks.size && patch.variantId !== object.variantId) fail('lock_violation', 'This piece has a size lock.');
     if (patch.appearance && locks.appearance && patch.appearance !== object.appearance) fail('lock_violation', 'Appearance is locked.');
     if (patch.targetSofaId !== undefined && (object.kind !== 'tv' || !layout.furniture.some(o => o.id === patch.targetSofaId && o.kind === 'sofa'))) fail('invalid_id', 'A TV target must refer to a sofa in this layout.');
@@ -126,11 +128,13 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       next = { ...next, sizeCm: clone(v.sizeCm), label: v.name, tags, sleepSize, backEdge: v.backEdge, fixtureType: v.fixtureType, lightingZone: patch.lightingZone || v.lightingZone };
     }
     if (object.ownership === 'owned') { next.sizeCm = clone(source.sizeCm); next.requiredInRoom = source.requiredInRoom; next.locked = clone(source.locked); next.tags = clone(source.tags); next.sleepSize = source.sleepSize; }
+    if (object.ownership === 'custom') { next.sizeCm = clone(source.sizeCm); next.kind = source.kind; next.label = source.label; next.requiredInRoom = false; next.locked = { ...clone(source.locked), size: true }; next.tags = []; next.customProvenance = clone(source.customProvenance); delete next.variantId; delete next.backEdge; delete next.sleepSize; }
     return normalizeFixturePlacement(next, room, rules, layout, patch.supportObjectId !== undefined);
   };
   const removeFrom = (layout: Layout, id: string, omitted: Proposal['omitted']) => {
     const object = layout.furniture.find(o => o.id === id) || fail('invalid_id', 'Furniture ID not found.'); const source = authoritative(object);
-    if (source.ownership === 'fixed' || Object.values(source.locked).some(Boolean)) fail('lock_violation', 'A piece protected by any lock cannot be removed.');
+    const protectedLock = Object.entries(source.locked).some(([name, value]) => value && !(source.ownership === 'custom' && name === 'size'));
+    if (source.ownership === 'fixed' || protectedLock) fail('lock_violation', 'A piece protected by a position, rotation or appearance lock cannot be removed.');
     if (source.ownership === 'owned' && source.requiredInRoom) fail('required_item_missing', 'The human must explicitly permit excluding this owned piece before it can be removed.');
     layout.furniture = layout.furniture.filter(o => o.id !== id);
     if (source.ownership === 'owned') omitted.push({ objectId: id, reason: 'Excluded with the human’s explicit optional-owned permission. Its measured inventory record is retained.' });
@@ -331,6 +335,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       } else {
         const p = clone(guard(a, ['setRoomGeometry', 'setOpening', 'setConstraints'].includes(name) ? 'setup' : 'layout'));
         if (name === 'findPlacements') { const searched = await search(p, a, signal); guard(a, 'layout'); searched.found.forEach(c => candidates.set(c.candidateId, c)); return { ...envelope(p), candidates: clone(searched.found), trials: searched.trials, searchBoundReached: searched.exhausted, explanation: searched.found.length ? 'Every returned placement passed relevant/new hard checks; layoutStatus includes unrelated existing issues.' : 'No candidate found within the bounded scan. This is not proof that no placement exists.' }; }
+        let mutationExtra: Args = {};
         if (name === 'setRoomGeometry') { p.room = { ...p.room, ...(a.widthCm !== undefined ? {widthCm:a.widthCm} : {}), ...(a.depthCm !== undefined ? {depthCm:a.depthCm} : {}), ...(a.name !== undefined ? {name:a.name} : {}) }; if (a.floorPlan !== undefined) { if (a.floorPlan === null) delete p.room.floorPlan; else p.room.floorPlan = clone(a.floorPlan); } }
         else if (name === 'setOpening') { if (state.room.openingLocks?.includes(a.opening.id) && !same(a.opening, state.room.openings.find(o => o.id === a.opening.id))) fail('lock_violation', 'This opening is pinned. Only the human can unpin it in Room inputs.'); if (a.opening.kind === 'window' && a.opening.headCm <= a.opening.sillCm) fail('invalid_opening', 'Window head must be above its sill.'); const idx = p.room.openings.findIndex(o => o.id === a.opening.id); if (idx >= 0) p.room.openings[idx] = clone(a.opening); else { if (p.room.openings.length >= 12) fail('room_limit', 'V1 supports at most 12 openings.'); p.room.openings.push(clone(a.opening)); } }
         else if (name === 'setConstraints') { p.rules = { ...p.rules, ...clone(a.constraints) }; checkRules(p.rules); }
@@ -342,6 +347,27 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         else if (name === 'updateFurniture') {
           const object = p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Furniture ID not found. Fixed features cannot be edited here.');
           const candidatePatch = resolveCandidate(a, p); const patch = candidatePatch || sanitizedPatch(a); const updated = checkPatch(object, patch, p.layout, p.room, p.rules); p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? updated : o);
+        } else if (name === 'createCustomFurniture') {
+          if (!a.label.trim() || /[\u0000-\u001f\u007f]/.test(a.label)) fail('invalid_arguments', 'Use a visible human-readable label without control characters.');
+          if (a.linkedDeskId !== undefined && a.kind !== 'chair') fail('invalid_property', 'Only a custom chair may use linkedDeskId. Other relationship, role and mount claims are not accepted.');
+          if (p.layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 movable pieces.');
+          const object = makeCustomFurniture({ label: a.label, kind: a.kind, widthCm: a.widthCm, depthCm: a.depthCm, heightCm: a.heightCm, positionCm: a.positionCm, rotation: a.rotation, appearance: a.appearance, ...(a.linkedDeskId ? { linkedDeskId: a.linkedDeskId } : {}) }, `custom-${p.id}-${p.revision + 1}`, p.rules.cellCm);
+          if (a.linkedDeskId) checkPatch(object, { linkedDeskId: a.linkedDeskId }, p.layout, p.room, p.rules);
+          const before = validate(p.layout, p.room, p.rules, state.inventory, false);
+          const baseline = new Set(before.issues.filter(issue => issue.severity === 'block').map(issueSignature));
+          const hypothetical = { ...p.layout, furniture: [...p.layout.furniture, object] };
+          const after = validate(hypothetical, p.room, p.rules, state.inventory, false);
+          const blocked = after.issues.find(issue => issue.severity === 'block' && (issue.objectIds.includes(object.id) || !baseline.has(issueSignature(issue))));
+          if (blocked) fail(blocked.code, `${blocked.code}: ${blocked.message} Custom furniture was not added.`);
+          p.layout.furniture.push(object);
+          const nextRevision = p.revision + 1;
+          mutationExtra = {
+            customFurniture: clone(object),
+            provenance: { source: 'agent_authored_one_off', tool: 'createCustomFurniture', persistence: 'room_document_local' },
+            measuredEnvelopeCm: clone(object.sizeCm),
+            review: { state: 'proposal_only', applied: false, requiresHumanApply: true, check: { tool: 'checkLayout', args: { which: 'proposal', revision: nextRevision, objectId: object.id } } },
+            message: 'Measured custom furniture was added only to the proposal. Its exact dimensions and semantic kind are immutable to agent edits. Review the visible object and leave Apply to the human.',
+          };
         } else if (name === 'placeFurniture') {
           const candidatePatch = resolveCandidate(a, p); let object: Furniture;
           if (a.ownedId) { if (a.variantId) fail('owned_resize_forbidden', 'Owned pieces cannot use catalogue variants.'); object = clone(state.inventory.find(o => o.id === a.ownedId) || fail('invalid_id', 'Owned inventory ID not found.')); if (p.layout.furniture.some(o => o.id === object.id)) fail('duplicate_owned_instance', 'This owned piece is already in the layout. Use updateFurniture.'); }
@@ -422,7 +448,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           return result;
         }
         if (signal?.aborted) fail('cancelled', 'Command cancelled without committing.');
-        result = commit(p);
+        result = commit(p, mutationExtra);
       }
       if (retryKey) { retries.set(retryKey, { signature, result: clone(result) }); if (retries.size > 100) retries.delete(retries.keys().next().value!); }
       return clone(result);
@@ -438,7 +464,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   const toolLog: ToolLogEntry[] = [];
   const getToolLog = () => toolLog;
   /** Arguments are agent-supplied; keep only non-sensitive categories. */
-  const summarise = (a: Args): string => {
+  const summarise = (name: string, a: Args): string => {
     const parts: string[] = [];
     if (a?.which === 'current' || a?.which === 'proposal') parts.push(`view=${a.which}`);
     if (typeof a?.kind === 'string') parts.push(`kind=${a.kind}`);
@@ -446,6 +472,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (a?.candidateId) parts.push('checked candidate');
     else if (a?.ownedId) parts.push('owned piece');
     else if (a?.variantId) parts.push('catalogue piece');
+    else if (name === 'createCustomFurniture') parts.push('custom measured piece');
     else if (a?.objectId) parts.push('existing piece');
     if (Array.isArray(a?.openings)) parts.push(`${a.openings.length} openings`);
     return parts.slice(0, 3).join(' · ');
@@ -459,7 +486,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       at: startedAt,
       ms: Date.now() - startedAt,
       name,
-      args: summarise(a),
+      args: summarise(name, a),
       ok: result.operationSucceeded === true,
       errorCode: (result.error as { code?: string } | undefined)?.code,
       revision: typeof result.revision === 'number' ? result.revision : undefined,
@@ -539,11 +566,11 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       const p = state.proposal || fail('proposal_not_found', 'No active proposal.');
       guard({ proposalId: p.id, revision: p.revision }, 'layout');
       const next = clone(state), o = next.proposal!.layout.furniture.find(f => f.id === id) || fail('invalid_id', 'Piece not found.');
-      if (o.ownership !== 'catalogue') fail('lock_violation', 'Change owned locks in Yours. The draft will become stale.');
-      o.locked = clone(locks); next.proposal!.revision++; publish(next); return envelope(next.proposal!);
+      if (o.ownership !== 'catalogue' && o.ownership !== 'custom') fail('lock_violation', 'Change owned locks in Yours. The draft will become stale.');
+      o.locked = o.ownership === 'custom' ? { ...clone(locks), size: true } : clone(locks); next.proposal!.revision++; publish(next); return envelope(next.proposal!);
     }
     const next = clone(state), o = next.current.furniture.find(o => o.id === id) || fail('invalid_id', 'Select a piece in Yours to change its locks.');
-    o.locked = clone(locks); const inventory = next.inventory.find(i => i.id === id); if (inventory) { inventory.locked = clone(locks); inventory.originCell = clone(o.originCell); inventory.rotation = o.rotation; inventory.wallAnchor = clone(o.wallAnchor); inventory.elevationCm = o.elevationCm; }
+    o.locked = o.ownership === 'custom' ? { ...clone(locks), size: true } : clone(locks); const inventory = next.inventory.find(i => i.id === id); if (inventory) { inventory.locked = clone(locks); inventory.originCell = clone(o.originCell); inventory.rotation = o.rotation; inventory.wallAnchor = clone(o.wallAnchor); inventory.elevationCm = o.elevationCm; }
     next.currentRevision++; publish(next); return { operationSucceeded: true };
   });
   const humanSetRequired = (id: string, required: boolean) => human(() => { const next = clone(state), inventory = next.inventory.find(o => o.id === id) || fail('invalid_id', 'Owned inventory piece not found.'); inventory.requiredInRoom = required; const o = next.current.furniture.find(o => o.id === id); if (o) o.requiredInRoom = required; next.currentRevision++; publish(next); return { operationSucceeded: true }; });

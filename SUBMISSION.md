@@ -72,9 +72,9 @@ The collaboration model is the design, not a feature:
 
 ## Implementation
 
-**15 native tools** on `document.modelContext`: `generateRoom`, `getRoomState`, `listFurniture`,
+**16 native tools** on `document.modelContext`: `generateRoom`, `getRoomState`, `listFurniture`,
 `listCatalogue`, `createProposal`, `setRoomGeometry`, `setOpening`,
-`setConstraints`, `placeFurniture`, `updateFurniture`, `removeFurniture`,
+`setConstraints`, `createCustomFurniture`, `placeFurniture`, `updateFurniture`, `removeFurniture`,
 `proposeLayout`, `findPlacements`, `setAppearance`, `checkLayout`.
 
 Each is registered with a strict JSON Schema, `readOnlyHint`, and
@@ -82,6 +82,8 @@ Each is registered with a strict JSON Schema, `readOnlyHint`, and
 text that flows into tool results. Registration awaits every promise and aborts
 the whole mount on partial failure, so the UI never claims tools are available
 when they are not. `execute` honours the caller's `AbortSignal`.
+
+`createCustomFurniture` adds one-off measured floor furniture to Proposal only. Its closed kind enum activates the same engine rules, exact dimensions and provenance cannot be rewritten into a catalogue variant, and any newly introduced blocking issue refuses the creation atomically. The schema accepts no arbitrary tags, code, markup, URLs, role claims or wall/ceiling mounts. Custom objects show a visible CUSTOM identity and safe 2D/3D primitives inside their measured envelope; they remain local to the room document and still require human Apply.
 
 Under them sits one pure rule engine on a 20 cm grid: conservative
 rasterisation, height classes (a coffee table passes the TV strip but still
@@ -98,7 +100,7 @@ and never claims a layout is impossible.
 
 **Testing.** The command, engine and rendering tests run with `npm test`, and CI also runs typecheck, lint and production build. `npm run test:native`,
 which drives real Chrome against the deployed URL and runs a multi-turn journey
-through `document.modelContext.executeTool` — asserting all 15 tools register,
+through `document.modelContext.executeTool` — asserting all 16 tools register,
 the `generateRoom` proposal flow reaches `ready_for_review`, a stale revision is
 refused, and Apply/room confirmation are unavailable to native tools.
 

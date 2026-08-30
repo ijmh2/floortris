@@ -43,6 +43,7 @@ function cylinder(parent: THREE.Object3D, radiusTop: number, radiusBottom: numbe
 export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.Group {
   const g = new THREE.Group(), pose = furniturePose(item, room, cellCm);
   g.name = item.id; g.userData.objectId = item.id; g.userData.heightUnknown = item.sizeCm.h === null;
+  if (item.ownership === 'custom') { g.userData.custom = true; g.userData.provenance = item.customProvenance?.source; g.userData.measuredEnvelopeCm = { ...item.sizeCm }; }
   g.position.set(pose.x, pose.y, pose.z); g.rotation.y = pose.angle;
   const w = item.sizeCm.w / 100, d = item.sizeCm.d / 100, h = (item.sizeCm.h ?? 100) / 100;
   const body = material(colorFor(item.appearance)), wood = material('#ad8c63'), dark = material('#3e4844'), cream = material('#ece3d3');
@@ -418,6 +419,17 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     }
   } else {
     box(g,[w,h,d],[0,h / 2,0],body,.025);
+  }
+  // Custom pieces are contractual measured envelopes, not catalogue art. Some
+  // decorative seams intentionally sit a millimetre proud on named variants;
+  // contain the complete safe primitive for custom records so no mesh exceeds
+  // the exact agent-supplied width, height or depth.
+  if (item.ownership === 'custom') {
+    const rotationY = g.rotation.y;
+    g.rotation.y = 0; g.updateMatrixWorld(true);
+    const rendered = new THREE.Box3().setFromObject(g).getSize(new THREE.Vector3());
+    g.scale.set(Math.min(1, w / Math.max(rendered.x, .001)), Math.min(1, h / Math.max(rendered.y, .001)), Math.min(1, d / Math.max(rendered.z, .001)));
+    g.rotation.y = rotationY; g.updateMatrixWorld(true);
   }
   // Materials not used by this kind must not linger across scene rebuilds.
   const used = new Set<THREE.Material>(); g.traverse(o=>{if(o instanceof THREE.Mesh)(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>used.add(m));});

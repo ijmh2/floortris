@@ -74,7 +74,7 @@ The tools panel is the way to tell the two apart: if it reports registered tools
 the page is fine and the model is the limitation.
 
 Once enabled, open the live URL and the tools panel (the tools status button above the board)
-reports how many native tools registered. An agent can then call any of the 15.
+reports how many native tools registered. An agent can then call any of the 16.
 
 ### Automated native check
 
@@ -87,10 +87,10 @@ npm run test:native                                    # against localhost:3001
 npm run test:native -- https://floortris.floortris.workers.dev/
 ```
 
-It launches Chrome with the required flags, asserts all 15 tools register and
+It launches Chrome with the required flags, asserts all 16 tools register and
 carry annotations, then exercises the `generateRoom` hero flow through
 `document.modelContext.executeTool`: a new custom-outline proposal is generated,
-a window blind and recessed ceiling light are placed through the native transport,
+a window blind, recessed ceiling light and measured custom item are placed through the native transport,
 and the result is checked and verified to remain human-Apply-only. It also confirms
 stale writes are refused and that Apply, Confirm, Discard and Unlock are not native
 tools.
@@ -161,11 +161,17 @@ Human-only methods, **not registered tools**:
 
 Exactly these names are registered:
 
-`generateRoom`, `getRoomState`, `listFurniture`, `listCatalogue`, `setRoomGeometry`, `setOpening`, `setConstraints`, `createProposal`, `placeFurniture`, `updateFurniture`, `removeFurniture`, `proposeLayout`, `findPlacements`, `setAppearance`, `checkLayout`.
+`generateRoom`, `getRoomState`, `listFurniture`, `listCatalogue`, `setRoomGeometry`, `setOpening`, `setConstraints`, `createProposal`, `createCustomFurniture`, `placeFurniture`, `updateFurniture`, `removeFurniture`, `proposeLayout`, `findPlacements`, `setAppearance`, `checkLayout`.
 
-The adapter follows the **26 August 2026 draft**: [WebMCP community report](https://webmachinelearning.github.io/webmcp/). It awaits each `registerTool` result, supplies an AbortController signal as registration options for cleanup, reads `execute`'s `{signal}`, and returns the structured result directly. It only announces a registered state after all fifteen registrations resolve. Failure aborts that mount's registrations. Unsupported browsers retain the full human editor. Registration does not claim that an external agent has discovered or executed the tools.
+The adapter follows the **26 August 2026 draft**: [WebMCP community report](https://webmachinelearning.github.io/webmcp/). It awaits each `registerTool` result, supplies an AbortController signal as registration options for cleanup, reads `execute`'s `{signal}`, and returns the structured result directly. It only announces a registered state after all sixteen registrations resolve. Failure aborts that mount's registrations. Unsupported browsers retain the full human editor. Registration does not claim that an external agent has discovered or executed the tools.
 
 Tools contain `readOnlyHint` plus `untrustedContentHint: true`, since user-entered labels are data and may appear in results. No tool performs Apply, Confirm room inputs, Discard, Unlock, or changes the selected UI view.
+
+### Agent-authored custom furniture
+
+`createCustomFurniture` creates one measured object only in an active layout proposal. It accepts a bounded label; a closed floor-furniture kind (`sofa`, `chair`, `table`, `coffee_table`, `desk`, `storage`, `bed`, `rug` or `plant`); exact width, depth, height and top-left position in centimetres; a quarter-turn rotation; a local furniture palette; and optionally a verified `linkedDeskId` for a chair. It is revision-bound and idempotent. The placement is checked against the same complete engine and is refused atomically if it introduces a blocking issue.
+
+Custom items carry closed local provenance and a permanent size lock. Agent tools may move, rotate, recolour or remove them, but cannot change their dimensions, semantic kind, provenance or brief role. The schema accepts no tags, custom rules, arbitrary shapes, code, HTML/SVG, remote URLs or mounts. Custom beds deliberately do not claim single/double/king classification; custom storage does not claim wardrobe, bedside or office-storage roles. They render as safe kind-based primitives within the measured envelope and show a CUSTOM identity in 2D, the inspector and the accessible 3D selector. The record persists only with its room export/local document; there is no remote template account or commerce layer.
 
 ### Candidate scope
 
@@ -246,13 +252,13 @@ Position fields are under the collapsed **Exact** section.
   displays checked, clickable ghosts; their exact candidate revisions are retained.
 - Compare shows two boards side by side, with horizontal scrolling on small screens.
 
-These changes retain the shared engine and the 15-tool surface. The optional native-result
+These changes retain the shared engine and the 16-tool surface. The optional native-result
 observer cannot change a command result if a UI notification fails. Room documents now use version 2; both original lounge storage keys and all measured content remain compatible. The later room-editor release added staged fixed-feature editing, session undo/redo and validated local JSON import. There is still no cloud room synchronization.
 
 ## 3D architectural view
 
 The **2D / 3D** toggle is presentation-only. Yours, Proposal and Compare use the
-same accepted/proposed records and the same 15 native tool contracts. Three.js
+same accepted/proposed records and the same 16 native tool contracts. Three.js
 loads only when the human selects 3D. Placement, checked ghosts and rule overlays
 remain on the 2D board; the existing inspector can still edit a selected piece.
 
@@ -342,7 +348,7 @@ session; a replay for an inactive saved room reports `room_not_active`.
 
 The **Rooms** picker changes the open document in state — `humanOpenRoom` on the
 store, the same in-place switch `generateRoom` already performed. There is no page
-load, so native registration is never torn down and rebuilt: the fifteen tools stay
+load, so native registration is never torn down and rebuilt: the sixteen tools stay
 live across a room change. `history.replaceState` keeps `?room=` and `?sample=` in
 step, so an existing link still opens the same room on this device.
 

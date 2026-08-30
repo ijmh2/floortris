@@ -91,10 +91,11 @@ export default function Room3D(props: Props) {
       <span className="ft-3d-watermark">A little room. A new perspective.</span>
       {!error&&<div className="ft-3d-camera" role="group" aria-label={`${props.title} camera controls`}><button onClick={()=>runtime.current?.zoom(1.2)} aria-label={`Zoom in ${props.title} 3D`}>+</button><button onClick={()=>runtime.current?.zoom(1/1.2)} aria-label={`Zoom out ${props.title} 3D`}>−</button><button onClick={()=>runtime.current?.reset()}>Reset camera</button><button aria-pressed={cutaway} onClick={()=>setCutaway(!cutaway)}>Cutaway {cutaway?'on':'off'}</button></div>}
     </div>
-    {props.selectable&&<div className="ft-3d-footer"><label>Select piece <select aria-label={`Select piece in ${props.title} 3D`} value={props.selected||''} onChange={e=>props.onSelect(e.target.value||null)}><option value="">Choose furniture</option>{props.layout.furniture.map(f=><option key={f.id} value={f.id}>{f.label}{f.locked.position?' · pinned':''}</option>)}</select></label></div>}
+    {props.selectable&&<div className="ft-3d-footer"><label>Select piece <select aria-label={`Select piece in ${props.title} 3D`} value={props.selected||''} onChange={e=>props.onSelect(e.target.value||null)}><option value="">Choose furniture</option>{props.layout.furniture.map(f=><option key={f.id} value={f.id}>{f.ownership==='custom'?'CUSTOM · ':''}{f.label} · {f.sizeCm.w} × {f.sizeCm.d} × {f.sizeCm.h??'?'} cm{f.locked.position?' · pinned':''}</option>)}</select></label></div>}
     {props.onEditRoom&&props.room.fixtures.length>0&&<button className="ft-text-button" onClick={props.onEditRoom}>Edit fixed fixtures ↗</button>}
     {concepts&&<p className="ft-3d-note">Bathroom concept only · fixed equipment and assumed access zones. No plumbing, installation or safety compliance assessment. Shower tray shown without an unmeasured enclosure.</p>}
     {unknown.length>0&&<p className="ft-3d-note">Height unknown: {unknown.map(f=>f.label).join(', ')}. Dashed boxes use a 1 m visual placeholder, not a measured height.</p>}
+    {props.layout.furniture.some(f=>f.ownership==='custom')&&<p className="ft-3d-note">CUSTOM marks agent-authored one-off furniture. Its safe primitive stays inside the exact measured envelope shown in the selector; validation still uses the shared 2D rule engine.</p>}
     {textureWarning&&<p className="ft-3d-note" role="status">A finish image could not load. Its base colour is shown; your layout and checks are unchanged.</p>}
   </section>;
 }

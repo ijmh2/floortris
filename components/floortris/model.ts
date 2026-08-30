@@ -8,6 +8,11 @@ export type Kind = 'sofa' | 'chair' | 'table' | 'coffee_table' | 'desk' | 'stora
   | 'radiator' | 'basin' | 'toilet' | 'shower' | 'bath' | 'towel_rail' | 'other';
 export type FixtureType = 'curtains' | 'blind' | 'pendant' | 'flush' | 'track' | 'recessed' | 'wall_sconce' | 'floor_lamp' | 'table_lamp';
 export type LightingZone = 'ambient' | 'seating' | 'reading' | 'circulation';
+/** Agent-authored furniture is deliberately limited to movable floor objects.
+ * Fixed, wall and ceiling roles need canonical room/mount records and therefore
+ * remain catalogue or human room-input concerns. */
+export type CustomFurnitureKind = 'sofa' | 'chair' | 'table' | 'coffee_table' | 'desk' | 'storage' | 'bed' | 'rug' | 'plant';
+export type CustomFurnitureProvenance = { source: 'agent_authored_one_off'; tool: 'createCustomFurniture' };
 export type RoomProfile =
   | { kind: 'lounge' }
   | { kind: 'bedroom'; sleeping: 'single' | 'double' | 'king'; workspace: boolean; storage: boolean; bedsideQuantity?: number }
@@ -17,7 +22,7 @@ export type FixedFixtureKind = 'radiator' | 'basin' | 'toilet' | 'shower' | 'bat
 export type Rotation = 0 | 90 | 180 | 270;
 export type Size = { w: number; d: number; h: number | null };
 export type Furniture = {
-  id: string; label: string; kind: Kind; ownership: 'owned' | 'catalogue' | 'fixed';
+  id: string; label: string; kind: Kind; ownership: 'owned' | 'catalogue' | 'custom' | 'fixed';
   sizeCm: Size; rotation: Rotation; originCell: Cell; variantId?: string;
   /** Catalogue-local back edge before rotation. Defaults to north. */
   backEdge?: Wall;
@@ -32,6 +37,9 @@ export type Furniture = {
   fixtureType?: FixtureType;
   /** Intended design role only; this is not a lux or electrical calculation. */
   lightingZone?: LightingZone;
+  /** Closed provenance marker. Custom records never accept agent tags, rule
+   * overrides, code, markup or remote assets. */
+  customProvenance?: CustomFurnitureProvenance;
   tags: string[]; sleepSize?: 'single' | 'double' | 'king'; conceptualOnly?: boolean; clearance?: { label: string; rect: Rect };
 };
 export type Door = { id: string; kind: 'door'; wall: Wall; segmentId?: string; offsetCm: number; widthCm: number; hinge: 'start' | 'end'; swing: 'in' | 'out'; angle: 90; mechanism: 'hinged' | 'pocket' | 'bifold' | 'sliding'; entrance: boolean };

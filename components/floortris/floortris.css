@@ -471,3 +471,4 @@
 .ft-fixture-wall{inset:7%;border-radius:45% 45% 25% 25%;background:radial-gradient(circle at 50% 65%,#fff5bd 0 24%,var(--piece-color) 28% 62%,#485348 65%)}
 .ft-fixture-floor_lamp,.ft-fixture-table_lamp{inset:3%;border-radius:50%;background:radial-gradient(circle,#655d42 0 8%,#fff6bd 10% 33%,var(--piece-color) 35% 60%,#596052 62% 67%,transparent 69%)}
 .ft-shape-window_treatment+.ft-item-label,.ft-shape-wall_light+.ft-item-label{font-size:6px}
+.ft-overhaul .ft-custom-piece{outline:2px dashed #2f6d58;outline-offset:2px;box-shadow:0 0 0 2px #f7fbf3aa}.ft-custom-glyph{position:absolute!important;right:3px!important;top:3px!important;z-index:5!important;display:grid!important;place-items:center;width:15px!important;height:15px!important;border-radius:50%!important;background:#245d4b!important;color:#fff!important;border:1px solid #f6fbf3!important;font:700 8px/1 'DM Sans',sans-serif!important;box-shadow:0 1px 3px #1e3c3022!important}
