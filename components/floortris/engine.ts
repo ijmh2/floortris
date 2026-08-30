@@ -1,7 +1,8 @@
 import { faces, key, opposite, rotations, type ActivityZone, type Rotation, type BriefRequirement, type Cell, type Door, type Furniture, type GridCell, type Issue, type Layout, type Opening, type Rect, type Report, type Room, type Rules, type Wall } from './model.ts';
 import { cellInsideRoom, floorAreaM2, rectInsideRoom, resolveWallSegment, wallRect, wallSegments } from './floorplan.ts';
+import { canSupportLamp, isFloorOccupant, LIGHT_KINDS, normalizeFixturePlacement } from './fixture-placement.ts';
 
-export const isSolid = (o: Furniture) => o.kind !== 'rug' && o.kind !== 'tv';
+export const isSolid = (o: Furniture) => isFloorOccupant(o);
 export function bounds(o: Furniture, cellCm = 20): Rect {
   const turned = o.rotation === 90 || o.rotation === 270;
   return { x: o.originCell.x * cellCm, y: o.originCell.y * cellCm, w: turned ? o.sizeCm.d : o.sizeCm.w, d: turned ? o.sizeCm.w : o.sizeCm.d };
@@ -164,21 +165,21 @@ function largestEmptyRectangle(columns: number, rows: number, blocked: Set<strin
 }
 export function validate(layout: Layout, room: Room, rules: Rules, inventory: Furniture[] = [], includeFixes = true): Report {
   const unit = rules.cellCm, columns = Math.ceil(room.widthCm / unit), rows = Math.ceil(room.depthCm / unit);
-  const checkedRules = ['custom_floor_boundary', 'physical_fit', 'solid_overlap', 'door_sweep', 'door_leaf_wall_attachments', 'windows', 'radiator', 'fixture_approaches', 'sofa_table_relationship', 'bed_side_access', 'desk_chair_relationship', 'storage_use_zones', 'wall_backing', 'orthogonal_hard_path', 'preferred_path', 'full_tv_strip', 'ceiling', 'owned_locks', 'required_brief'];
+  const checkedRules = ['custom_floor_boundary', 'physical_fit', 'solid_overlap', 'door_sweep', 'door_leaf_wall_attachments', 'windows', 'window_treatments', 'radiator', 'fixture_approaches', 'sofa_table_relationship', 'bed_side_access', 'desk_chair_relationship', 'storage_use_zones', 'wall_backing', 'orthogonal_hard_path', 'preferred_path', 'full_tv_strip', 'ceiling', 'ceiling_fixture_outline', 'lighting_mounts', 'lighting_zones', 'owned_locks', 'required_brief'];
   const cells: GridCell[] = Array.from({ length: rows * columns }, (_, i) => ({ x: i % columns, y: Math.floor(i / columns), heightClass: 'FREE', objectIds: [], flags: [] }));
   const lookup = new Map(cells.map(c => [key(c), c]));
   const insideKeys = new Set(cells.filter(c => cellInsideRoom(room, c.x, c.y, unit)).map(key));
   cells.filter(c => !insideKeys.has(key(c))).forEach(c => c.flags.push('outside_floorplan'));
   const issues: Issue[] = [], zones: ActivityZone[] = [];
   const all = [...room.fixtures, ...layout.furniture];
-  const masks = new Map(all.map(o => [o.id, o.kind === 'tv' ? [] : rectCells(bounds(o, unit), unit)]));
+  const masks = new Map(all.map(o => [o.id, isFloorOccupant(o) ? rectCells(bounds(o, unit), unit) : []]));
   const issue = (code: string, message: string, ids: string[] = [], at: Cell[] = [], severity: Issue['severity'] = 'block', flags: string[] = [], fix?: Issue['fix']) => { issues.push({ code, message, severity, objectIds: [...new Set(ids)], cells: at, flags, ...(includeFixes && fix ? { fix } : {}) }); };
   const flag = (at: Cell[], name: string) => at.forEach(c => { const g = lookup.get(key(c)); if (g && !g.flags.includes(name)) g.flags.push(name); });
   const occupants = (at: Cell[], exempt: string[] = []) => [...new Set(at.flatMap(c => lookup.get(key(c))?.objectIds || []).filter(id => !exempt.includes(id)))];
   for (const o of all) {
     const b = bounds(o, unit), at = masks.get(o.id)!;
-    if (o.kind !== 'tv' && (b.w <= 0 || b.d <= 0)) issue('footprint_invalid', `${o.label} has no measurable footprint, so no clearance or route rule can see it. Give it a positive width and depth.`, [o.id]);
-    if (o.kind !== 'tv' && !rectInsideRoom(room, b)) issue('out_of_room', `${o.label} extends past the room outline. Move it inside the boundary.`, [o.id], at.filter(c => !insideKeys.has(key(c))));
+    if (isFloorOccupant(o) && (b.w <= 0 || b.d <= 0)) issue('footprint_invalid', `${o.label} has no measurable footprint, so no clearance or route rule can see it. Give it a positive width and depth.`, [o.id]);
+    if ((isFloorOccupant(o) || o.kind === 'ceiling_light' || o.kind === 'table_lamp') && !rectInsideRoom(room, b)) issue('out_of_room', `${o.label} extends past the room outline. Move it inside the boundary.`, [o.id], rectCells(b, unit).filter(c => !insideKeys.has(key(c))));
     if (o.sizeCm.h !== null && o.elevationCm + o.sizeCm.h > rules.ceilingCm) issue('ceiling_collision', `${o.label} is above the ${rules.ceilingCm} cm ceiling. Check the measured height or mount.`, [o.id]);
     if (!isSolid(o)) continue;
     for (const c of at) { const g = lookup.get(key(c)); if (!g) continue; g.objectIds.push(o.id); g.heightClass = o.sizeCm.h === null || g.heightClass === 'UNKNOWN_HEIGHT' ? 'UNKNOWN_HEIGHT' : o.sizeCm.h > rules.H_lowCm || g.heightClass === 'TALL' ? 'TALL' : 'LOW'; }
@@ -197,14 +198,13 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       if (opening.mechanism !== 'hinged') issue('unsupported_opening', `${opening.id}: ${opening.mechanism} doors are not modelled. Choose a supported hinged fixture or revise this room outside V1.`, [opening.id]);
       flag(reserve, 'door_swing_reserved'); flag(leaf, 'door_leaf_blocked'); leaf.forEach(c => blocked.add(key(c)));
       const ids = occupants(reserve); if (ids.length) issue('door_swing_obstructed', 'Furniture occupies the reserved door sweep or out-swing approach. Move it clear of the hatched area.', [opening.id, ...ids], reserve.filter(c => occupants([c]).length > 0), 'block', ['door_swing_reserved']);
-      // TVs have no floor mask, so a 90-degree leaf can otherwise finish along
-      // an adjacent wall and pass through the screen while Door still reads
-      // clear. Check the continuous leaf plane against the screen projection.
+      // Wall-mounted pieces have no floor mask, so a 90-degree leaf can
+      // otherwise finish along an adjacent wall and pass through them.
       const leafRect = openDoorLeafRect(room, opening);
-      if (leafRect) for (const tv of layout.furniture.filter(o => o.kind === 'tv' && o.wallAnchor && o.wallAnchor.wall !== opening.wall)) {
-        const projection = wallAttachmentProjection(room, tv);
-        const verticalOverlap = tv.elevationCm < rules.ceilingCm && (tv.sizeCm.h === null || tv.elevationCm + tv.sizeCm.h > 0);
-        if (projection && verticalOverlap && overlaps(leafRect, projection)) issue('door_leaf_wall_attachment', `The open leaf of ${opening.id} reaches the ${tv.wallAnchor!.wall}-wall TV. Move the TV or revise the confirmed door pose.`, [opening.id, tv.id], rectCells(leafRect, unit).filter(c => lookup.has(key(c))), 'block', ['door_leaf_blocked']);
+      if (leafRect) for (const attachment of layout.furniture.filter(o => ['tv', 'wall_light', 'window_treatment'].includes(o.kind) && o.wallAnchor && o.wallAnchor.wall !== opening.wall)) {
+        const projection = wallAttachmentProjection(room, attachment);
+        const verticalOverlap = attachment.elevationCm < rules.ceilingCm && (attachment.sizeCm.h === null || attachment.elevationCm + attachment.sizeCm.h > 0);
+        if (projection && verticalOverlap && overlaps(leafRect, projection)) issue('door_leaf_wall_attachment', `The open leaf of ${opening.id} reaches ${attachment.label}. Move the wall fixture or revise the confirmed door pose.`, [opening.id, attachment.id], rectCells(leafRect, unit).filter(c => lookup.has(key(c))), 'block', ['door_leaf_blocked']);
       }
     } else {
       flag(reserve, 'window_envelope');
@@ -214,6 +214,59 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
       if (ids.length) issue('window_sill_collision', `Furniture in the ${rules.windowFrontCm} cm window-front band overlaps the sill-to-head height. Move it away from this band.`, [opening.id, ...ids], band);
       if (opening.type === 'unknown') issue('window_opening_unverified', 'Window mechanism is unknown. The sill policy was checked; the opening envelope was not verified.', [opening.id], band, 'warning');
     }
+  }
+  const sameWallSurface = (a: { wall: Wall; segmentId?: string }, b: { wall: Wall; segmentId?: string }) => room.floorPlan ? !!a.segmentId && a.segmentId === b.segmentId : a.wall === b.wall;
+  for (const treatment of layout.furniture.filter(o => o.kind === 'window_treatment')) {
+    const window = room.openings.find(o => o.id === treatment.attachedOpeningId && o.kind === 'window');
+    if (!window) { issue('window_treatment_unassociated', `${treatment.label} must name an existing window in attachedOpeningId.`, [treatment.id]); continue; }
+    if (!['curtains', 'blind'].includes(treatment.fixtureType || '')) { issue('window_treatment_type', `${treatment.label} must declare curtains or blind as its fixtureType.`, [treatment.id]); continue; }
+    const expected = normalizeFixturePlacement(treatment, room, rules, layout), anchor = treatment.wallAnchor;
+    const detached = !anchor || !expected.wallAnchor || !sameWallSurface(anchor, window) || Math.abs(anchor.offsetCm - expected.wallAnchor.offsetCm) > .01
+      || Math.abs(treatment.sizeCm.w - expected.sizeCm.w) > .01 || Math.abs(treatment.sizeCm.d - expected.sizeCm.d) > .01
+      || Math.abs((treatment.sizeCm.h || 0) - (expected.sizeCm.h || 0)) > .01 || treatment.elevationCm !== expected.elevationCm;
+    if (detached) issue('window_treatment_detached', `${treatment.label} no longer matches ${window.id}'s measured wall, width, drop and projection. Reattach it to that window.`, [treatment.id, window.id]);
+    if (!anchor) continue;
+    const projection = wallAttachmentProjection(room, treatment);
+    if (!projection || !rectInsideRoom(room, projection)) issue('out_of_room', `${treatment.label} extends beyond its wall segment or custom floor outline.`, [treatment.id]);
+    if (treatment.fixtureType === 'blind') continue; // fitted to the opening; no floor occupancy or curtain-side clearance.
+    const at = rectCells(projection || { x: 0, y: 0, w: 0, d: 0 }, unit).filter(c => lookup.has(key(c)));
+    flag(at, 'curtain_projection');
+    const conflicts = occupants(at).filter(id => {
+      const other = all.find(o => o.id === id); if (!other) return false;
+      return other.sizeCm.h === null || (treatment.elevationCm < other.elevationCm + (other.sizeCm.h || rules.ceilingCm) && treatment.elevationCm + (treatment.sizeCm.h || rules.ceilingCm) > other.elevationCm);
+    });
+    if (conflicts.length) issue('curtain_clearance_blocked', `${treatment.label}'s measured ${treatment.sizeCm.d} cm projection conflicts with furniture or a radiator. Keep the fabric zone clear.`, [treatment.id, ...conflicts], at, 'block', ['curtain_projection']);
+    for (const door of room.openings.filter((o): o is Door => o.kind === 'door' && sameWallSurface(o, anchor))) if (anchor.offsetCm < door.offsetCm + door.widthCm && anchor.offsetCm + treatment.sizeCm.w > door.offsetCm) issue('curtain_door_conflict', `${treatment.label} overlaps ${door.id} along the same wall. Narrow or remove the treatment.`, [treatment.id, door.id], at, 'block', ['curtain_projection']);
+  }
+  for (const light of layout.furniture.filter(o => o.kind === 'ceiling_light')) {
+    const b = bounds(light, unit);
+    if (!['pendant', 'flush', 'track', 'recessed'].includes(light.fixtureType || '')) issue('ceiling_light_type', `${light.label} needs a pendant, flush, track or recessed fixtureType.`, [light.id]);
+    if (!rectInsideRoom(room, b)) issue('ceiling_fixture_outside', `${light.label}'s complete ceiling-plan envelope must stay inside the actual room outline, including L-shaped cut-outs.`, [light.id], rectCells(b, unit));
+    const expectedBottom = rules.ceilingCm - (light.sizeCm.h || 0);
+    if (Math.abs(light.elevationCm - expectedBottom) > .01) issue('ceiling_mount_detached', `${light.label} must hang from the ${rules.ceilingCm} cm ceiling; its bottom should be ${expectedBottom} cm.`, [light.id]);
+    if (light.elevationCm < 200) issue('ceiling_head_clearance', `${light.label} hangs below the 200 cm Floortris planning head-clearance assumption. Raise it or choose a shallower fitting; this is not a code-compliance claim.`, [light.id], rectCells(b, unit), 'block');
+  }
+  for (const light of layout.furniture.filter(o => o.kind === 'wall_light')) {
+    const anchor = light.wallAnchor, segment = anchor && resolveWallSegment(room, anchor);
+    if (!anchor || !segment) { issue('wall_light_unassociated', `${light.label} needs an explicit wallAnchor${room.floorPlan ? ' with segmentId' : ''}.`, [light.id]); continue; }
+    if (anchor.offsetCm < 0 || anchor.offsetCm + light.sizeCm.w > segment.lengthCm) issue('out_of_room', `${light.label} extends beyond ${segment.id}.`, [light.id]);
+    if (light.fixtureType !== 'wall_sconce') issue('wall_light_type', `${light.label} must declare wall_sconce as its fixtureType.`, [light.id]);
+    const low = light.elevationCm, high = light.elevationCm + (light.sizeCm.h || rules.ceilingCm), projection = wallAttachmentProjection(room, light);
+    if (low < 0 || high > rules.ceilingCm) issue('wall_light_height', `${light.label}'s complete measured height must stay between the floor and the ${rules.ceilingCm} cm ceiling.`, [light.id], [], 'block');
+    else if (low < 80) issue('wall_light_height', `${light.label} is below the 80 cm Floortris wall-light planning height. Confirm the intended low-level use; this is design guidance, not an electrical or building-code claim.`, [light.id], [], 'warning');
+    for (const opening of room.openings.filter(o => sameWallSurface(o, anchor))) {
+      const openingLow = opening.kind === 'window' ? opening.sillCm : 0, openingHigh = opening.kind === 'window' ? opening.headCm : rules.ceilingCm;
+      if (anchor.offsetCm < opening.offsetCm + opening.widthCm && anchor.offsetCm + light.sizeCm.w > opening.offsetCm && low < openingHigh && high > openingLow) issue('wall_light_opening_overlap', `${light.label} overlaps ${opening.id} in wall position and height.`, [light.id, opening.id]);
+    }
+    const near = projection ? rectCells(wallBand(room, anchor.wall, anchor.offsetCm, light.sizeCm.w, Math.max(20, light.sizeCm.d), anchor.segmentId), unit) : [];
+    const tall = occupants(near).filter(id => { const other = all.find(o => o.id === id); return !!other && (other.sizeCm.h === null || (other.elevationCm < high && other.elevationCm + (other.sizeCm.h || rules.ceilingCm) > low)); });
+    if (tall.length) issue('wall_light_furniture_overlap', `${light.label} intersects tall furniture at its mounting height. Move the sconce, or move the furniture away from that wall section.`, [light.id, ...tall], near);
+  }
+  for (const lamp of layout.furniture.filter(o => o.kind === 'table_lamp')) {
+    const support = layout.furniture.find(o => o.id === lamp.supportObjectId && canSupportLamp(o));
+    if (!support) { issue('table_lamp_unsupported', `${lamp.label} must link supportObjectId to a table, desk or cabinet in this layout.`, [lamp.id]); continue; }
+    const l = bounds(lamp, unit), s = bounds(support, unit), top = support.elevationCm + (support.sizeCm.h || 0);
+    if (l.x < s.x || l.y < s.y || l.x + l.w > s.x + s.w || l.y + l.d > s.y + s.d || Math.abs(lamp.elevationCm - top) > .01) issue('table_lamp_unsupported', `${lamp.label}'s measured base must be fully on ${support.label}'s top at ${top} cm.`, [lamp.id, support.id], rectCells(l, unit));
   }
   for (const o of room.fixtures.filter(o => o.kind === 'radiator')) {
     const b = bounds(o, unit); const wall = o.wallAnchor?.wall || 'east';
@@ -240,6 +293,23 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   const hard = footprintPass(columns, rows, blocked, hardSize, room, doors, unit);
   const preferred = preferredSize === hardSize ? hard : footprintPass(columns, rows, blocked, preferredSize, room, doors, unit);
   for (const g of cells) g.flags.push(preferred.covered.has(key(g)) ? 'walk_clear' : hard.covered.has(key(g)) ? 'walk_tight' : 'walk_blocked');
+  const lights = layout.furniture.filter(o => LIGHT_KINDS.has(o.kind));
+  const centre = (o: Furniture) => { const b = bounds(o, unit); return { x: b.x + b.w / 2, y: b.y + b.d / 2 }; };
+  const distance = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  const seatingTargets = layout.furniture.filter(o => o.kind === 'sofa' || o.kind === 'chair'), readingTargets = layout.furniture.filter(o => o.kind === 'chair' || o.kind === 'desk');
+  for (const light of lights) {
+    const source = centre(light), zone = light.lightingZone || 'ambient';
+    if (zone === 'seating' && (!seatingTargets.length || Math.min(...seatingTargets.map(o => distance(source, centre(o)))) > 260)) issue('lighting_zone_mismatch', `${light.label} is labelled for seating but is not within the 260 cm Floortris planning radius of a sofa or chair. This is placement guidance, not a lighting calculation.`, [light.id, ...seatingTargets.map(o => o.id)], [], 'warning');
+    if (zone === 'reading' && (!readingTargets.length || Math.min(...readingTargets.map(o => distance(source, centre(o)))) > 180)) issue('lighting_zone_mismatch', `${light.label} is labelled for reading but is not within the 180 cm planning radius of a chair or desk.`, [light.id, ...readingTargets.map(o => o.id)], [], 'warning');
+    if (zone === 'circulation') {
+      const sourceCell = { x: Math.floor(source.x / unit), y: Math.floor(source.y / unit) };
+      if (![...hard.reachableCovered].some(entry => { const [x, y] = entry.split(',').map(Number); return Math.hypot(x - sourceCell.x, y - sourceCell.y) <= 6; })) issue('lighting_zone_mismatch', `${light.label} is labelled for circulation but is not near the connected entrance route.`, [light.id], [], 'warning');
+    }
+  }
+  if (lights.length) {
+    if (seatingTargets.length && !lights.some(light => ['seating', 'reading'].includes(light.lightingZone || '') && seatingTargets.some(target => distance(centre(light), centre(target)) <= 260))) issue('lighting_zone_unserved', 'The room has seating, but no seating/reading fixture is near it. Consider adding or relabelling a light; this is design guidance only.', seatingTargets.map(o => o.id), [], 'info');
+    if (doors.some(d => d.entrance) && !lights.some(light => ['ambient', 'circulation'].includes(light.lightingZone || 'ambient'))) issue('lighting_zone_unserved', 'No ambient or circulation fixture is assigned to the entrance route.', doors.filter(d => d.entrance).map(d => d.id), [], 'info');
+  }
   const addZone = (id: string, objectId: string, label: string, rect: Rect, flexible = false, purpose?: string, blocking = true) => {
     const reachable = zoneReachable(rect, hard, unit, flexible), preferredReachable = zoneReachable(rect, preferred, unit, true), at = rectCells(rect, unit).filter(c => lookup.has(key(c)));
     const zone = { id, objectId, label, rect, reachable, preferredReachable, cells: at, purpose }; zones.push(zone); flag(at, reachable ? 'path_reachable' : 'path_unreachable');

@@ -5,10 +5,11 @@ import { formFor, PALETTES } from './data.ts';
 import { finishMaterial, mapFinishUV, type TextureOptions } from './finish-material.ts';
 import type { Furniture, Layout, Room, Rules, Wall } from './model.ts';
 import { floorPoints, wallPointCm, wallSegments } from './floorplan.ts';
+import { isWallMounted } from './fixture-placement.ts';
 
 // Metres in the renderer, centimetres in the document. +X east, +Z south, +Y up.
 export function furniturePose(item: Furniture, room: Room, cellCm = 20) {
-  if (item.kind === 'tv' && item.wallAnchor) {
+  if (isWallMounted(item) && item.wallAnchor) {
     const { wall } = item.wallAnchor, point = wallPointCm(room, item.wallAnchor, item.sizeCm.w / 2, item.sizeCm.d / 2);
     if (point) return { x: point[0] / 100, z: point[1] / 100, y: item.elevationCm / 100, angle: { north: 0, east: -Math.PI / 2, south: Math.PI, west: Math.PI / 2 }[wall] };
   }
@@ -55,6 +56,44 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     box(g, [w, h, d], [0, h / 2, 0], body);
     const source = new THREE.BoxGeometry(w, h, d);
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(source), new THREE.LineBasicMaterial({color:'#a96831'})); source.dispose(); edges.position.y = h / 2; g.add(edges);
+  } else if (item.kind === 'window_treatment') {
+    if (item.fixtureType === 'blind') {
+      box(g, [w, h, Math.max(.006,d)], [0, h / 2, 0], cream, .006);
+      for (let y=.025;y<h;y+=.07) box(g,[w*.98,.009,Math.max(.002,d*.72)],[0,y,d*.12],body,.003);
+      box(g,[w,.035,Math.max(.003,d*.9)],[0,h-.0175,0],dark,.004);
+    } else {
+      const rail=.035; box(g,[w,rail,d*.45],[0,h-rail/2,-d*.18],dark,.008);
+      const panelW=w*.49;
+      for(const x of [-1,1]) {
+        box(g,[panelW,h-rail,d],[x*w*.255,(h-rail)/2,0],body,.025);
+        for(let fold=-panelW/2+.025;fold<panelW/2;fold+=.055) box(g,[.012,h-rail,d*.94],[x*w*.255+fold,(h-rail)/2,d*.03],cream,.006);
+      }
+    }
+  } else if (item.kind === 'ceiling_light') {
+    const glow=new THREE.MeshStandardMaterial({color:'#fff3bd',emissive:'#ffd98a',emissiveIntensity:.8,roughness:.45});
+    if(item.fixtureType==='track') {
+      box(g,[w,.045,d],[0,h-.025,0],dark,.008);
+      for(const x of [-w*.36,0,w*.36]) { const spot=cylinder(g,Math.min(d*.22,.07),Math.min(d*.30,.10),Math.min(h*.72,.14),[x,h*.48,0],body);spot.rotation.z=x===0?0:(x<0?-.3:.3); cylinder(g,Math.min(d*.13,.045),Math.min(d*.13,.045),.012,[x,Math.max(.006,h*.18),0],glow); }
+    } else if(item.fixtureType==='recessed') {
+      cylinder(g,w*.48,w*.48,h,[0,h/2,0],dark); cylinder(g,w*.39,w*.39,.006,[0,.008,0],body); cylinder(g,w*.31,w*.31,.008,[0,.004,0],glow);
+    } else if(item.fixtureType==='flush') {
+      cylinder(g,w*.48,w*.42,h,[0,h/2,0],body); cylinder(g,w*.43,w*.43,.009,[0,h-.0045,0],dark); cylinder(g,w*.38,w*.38,.012,[0,.006,0],glow);
+    } else {
+      cylinder(g,.012,.012,h*.62,[0,h*.69,0],dark);
+      cylinder(g,w*.12,w*.47,h*.38,[0,h*.19,0],body);
+      cylinder(g,w*.32,w*.32,.012,[0,.006,0],glow);
+    }
+  } else if (item.kind === 'wall_light') {
+    const glow=new THREE.MeshStandardMaterial({color:'#fff2bd',emissive:'#ffd98a',emissiveIntensity:.7,roughness:.5});
+    box(g,[w*.55,h*.32,d*.3],[0,h*.5,-d*.35],dark,.025);
+    cylinder(g,Math.min(w*.22,d*.22),Math.min(w*.38,d*.32),h*.68,[0,h*.48,-d*.08],body);
+    box(g,[w*.62,h*.12,Math.min(.008,d*.12)],[0,h*.34,d/2-Math.min(.004,d*.06)],glow,.02);
+  } else if (item.kind === 'floor_lamp' || item.kind === 'table_lamp') {
+    const reach=Math.min(w,d)/2, shade=item.kind==='floor_lamp'?h*.25:h*.42, glow=new THREE.MeshStandardMaterial({color:'#fff2bd',emissive:'#ffd98a',emissiveIntensity:.55,roughness:.55});
+    cylinder(g,reach*.48,reach*.58,Math.min(h*.05,.04),[0,Math.min(h*.025,.02),0],dark);
+    cylinder(g,reach*.075,reach*.095,h-shade*.65,[0,(h-shade*.65)/2,0],wood);
+    cylinder(g,reach*.48,reach*.82,shade,[0,h-shade/2,0],body);
+    cylinder(g,reach*.46,reach*.46,.012,[0,h-shade+.006,0],glow);
   } else if (item.kind === 'sofa' && form === 'corner') {
     // Conservative L inside the measured rectangle: a main run plus a chaise return.
     // The chaise sits on the west side, so the open corner is the south east

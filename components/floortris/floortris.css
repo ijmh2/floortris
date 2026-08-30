@@ -458,3 +458,16 @@
 .ft-form-corner::after,.ft-form-corner::before{content:none}
 /* The backrest has to read against a graphite chair as well as an oat one. */
 .ft-form-task .ft-form-parts>i:nth-child(3){background:color-mix(in srgb,var(--piece-color),#1f2b27 52%);box-shadow:0 0 0 1px #ffffff6b}
+
+/* Semantic fixtures share their measured plan envelopes with the engine. */
+.ft-shape-window_treatment,.ft-shape-ceiling_light,.ft-shape-wall_light,.ft-shape-floor_lamp,.ft-shape-table_lamp{background:transparent;border:0;box-shadow:none;overflow:visible}
+.ft-fixture-glyph,.ft-fixture-glyph>i{position:absolute;display:block}
+.ft-fixture-glyph{inset:0}
+.ft-fixture-curtains{background:repeating-linear-gradient(90deg,color-mix(in srgb,var(--piece-color),white 20%) 0 8%,var(--piece-color) 8% 17%);border:1px solid #7a745d66;border-radius:2px}
+.ft-fixture-curtains>i:first-child,.ft-fixture-curtains>i:nth-child(2){top:0;bottom:0;width:7%;background:#fcf8ed88}.ft-fixture-curtains>i:first-child{left:5%}.ft-fixture-curtains>i:nth-child(2){right:5%}
+.ft-fixture-blind{background:repeating-linear-gradient(0deg,var(--piece-color) 0 12%,color-mix(in srgb,var(--piece-color),white 28%) 12% 20%);border:1px solid #777b6866}.ft-fixture-blind>i:first-child{left:0;right:0;top:0;height:16%;background:#555e4e}
+.ft-fixture-pendant,.ft-fixture-flush,.ft-fixture-recessed{inset:7%;border-radius:50%;background:radial-gradient(circle,#fffbd7 0 25%,var(--piece-color) 27% 60%,#495749 63% 68%,transparent 70%)}
+.ft-fixture-track{top:36%;bottom:36%;border-radius:4px;background:#435049}.ft-fixture-track>i{width:18%;aspect-ratio:1;border-radius:50%;top:50%;transform:translateY(-50%);background:#fff3b8;box-shadow:0 0 0 2px #515c52}.ft-fixture-track>i:nth-child(1){left:8%}.ft-fixture-track>i:nth-child(2){left:41%}.ft-fixture-track>i:nth-child(3){right:8%}
+.ft-fixture-wall{inset:7%;border-radius:45% 45% 25% 25%;background:radial-gradient(circle at 50% 65%,#fff5bd 0 24%,var(--piece-color) 28% 62%,#485348 65%)}
+.ft-fixture-floor_lamp,.ft-fixture-table_lamp{inset:3%;border-radius:50%;background:radial-gradient(circle,#655d42 0 8%,#fff6bd 10% 33%,var(--piece-color) 35% 60%,#596052 62% 67%,transparent 69%)}
+.ft-shape-window_treatment+.ft-item-label,.ft-shape-wall_light+.ft-item-label{font-size:6px}

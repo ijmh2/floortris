@@ -25,13 +25,18 @@ export function VariantPreview({ variant, rules }: { variant: Variant; rules: Ru
   const all = [piece, ...zones], x = Math.min(...all.map(r => r.x)), y = Math.min(...all.map(r => r.y));
   const w = Math.max(...all.map(r => r.x + r.w)) - x, d = Math.max(...all.map(r => r.y + r.d)) - y;
   const style = (r: typeof piece) => ({ left: `${(r.x - x) / w * 100}%`, top: `${(r.y - y) / d * 100}%`, width: `${r.w / w * 100}%`, height: `${r.d / d * 100}%` });
+  const diagramLabel = item.kind === 'tv' ? 'Wall TV' : item.kind === 'window_treatment' ? 'Window fit' : item.kind === 'ceiling_light' ? 'Ceiling plan' : item.kind === 'wall_light' ? 'Wall mount' : item.kind === 'table_lamp' ? 'Supported base' : 'Footprint';
+  const fixtureCopy = item.kind === 'window_treatment' ? (item.fixtureType === 'blind' ? 'Fits its named window and reserves no floor cells.' : 'Fits its named window; its shallow room-side projection is checked against doors, radiators and furniture.')
+    : item.kind === 'ceiling_light' ? 'Ceiling-mounted with no floor occupancy; the complete plan stays inside the real room outline.'
+    : item.kind === 'wall_light' ? 'Wall-mounted at a measured height; openings and tall furniture are checked.'
+    : item.kind === 'table_lamp' ? 'Requires a measured table, desk or cabinet support.' : undefined;
   return <section className="ft-size-preview" aria-label="Measured footprint preview">
-    <strong>{variant.name}</strong><span>{variant.sizeCm.w} × {variant.sizeCm.d} × {variant.sizeCm.h} cm · measured envelope</span>
+    <strong>{variant.name}</strong><span>{variant.sizeCm.w} × {variant.sizeCm.d} × {variant.sizeCm.h} cm · {item.kind === 'window_treatment' ? 'nominal envelope; fitted on placement' : 'measured envelope'}</span>
     <div className="ft-size-diagram" style={{ aspectRatio: `${w}/${d}` }}>
       {zones.map((r, i) => <i key={i} className="ft-size-clearance" style={style(r)} />)}
-      <div className="ft-size-footprint" style={style(piece)}>{item.kind === 'tv' ? 'Wall TV' : 'Footprint'}</div>
+      <div className="ft-size-footprint" style={style(piece)}>{diagramLabel}</div>
     </div>
-    <p>{item.kind === 'bed' ? `${rules.bedLongSideAccessCm} cm side entry · 60 cm head segment excluded · at least 100 cm entry length.` : zones.length ? `${item.kind === 'desk' ? rules.chairPullCm : rules.storageFrontCm} cm front reservation.` : item.kind === 'rug' ? 'Floor layer · does not block walking.' : 'Solid footprint; room routes are checked on placement.'}</p>
-    <small>Size preview only. Drag onto the room for a checked placement.</small>
+    <p>{fixtureCopy || (item.kind === 'bed' ? `${rules.bedLongSideAccessCm} cm side entry · 60 cm head segment excluded · at least 100 cm entry length.` : zones.length ? `${item.kind === 'desk' ? rules.chairPullCm : rules.storageFrontCm} cm front reservation.` : item.kind === 'rug' ? 'Floor layer · does not block walking.' : 'Solid footprint; room routes are checked on placement.')}</p>
+    <small>Size preview only. Select or drag to create a checked placement; linked fixtures choose their measured window or support.</small>
   </section>;
 }

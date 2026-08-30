@@ -5,12 +5,13 @@ import { TOOL_SCHEMAS, validateSchema } from './schemas.ts';
 import { roomEditStamp, validateRoomInputs } from './room-inputs.ts';
 import { profileRules } from './samples.ts';
 import { documentId } from './persistence.ts';
-import { anchorForDirection, resolveWallSegment, wallRect, wallSegments } from './floorplan.ts';
+import { anchorForDirection, rectInsideRoom, resolveWallSegment, wallRect, wallSegments } from './floorplan.ts';
+import { canSupportLamp, isFloorOccupant, LIGHT_KINDS, normalizeFixturePlacement } from './fixture-placement.ts';
 
 // All commands are checked against strict recursive schemas before this dispatcher reads dynamic keys.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema-validated JSON dispatch boundary; authoritative domain records remain strongly typed.
 type Args = Record<string, any>;
-export type HumanPatch = Partial<Pick<Furniture, 'originCell' | 'rotation' | 'variantId' | 'targetSofaId' | 'linkedDeskId' | 'wallAnchor' | 'elevationCm' | 'appearance'>>;
+export type HumanPatch = Partial<Pick<Furniture, 'originCell' | 'rotation' | 'variantId' | 'targetSofaId' | 'linkedDeskId' | 'attachedOpeningId' | 'supportObjectId' | 'lightingZone' | 'wallAnchor' | 'elevationCm' | 'appearance'>>;
 /** V1 data is retained byte-for-byte in layout terms; V2 only adds room intent. */
 export function migrateState(input: AppState): AppState {
   const next = clone(input);
@@ -38,7 +39,7 @@ const pause = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 function checkRules(r: Rules) {
   if (r.walkHardCm <= 0 || r.walkPreferredCm < r.walkHardCm) fail('invalid_constraints', 'Preferred walking width must be at least the positive hard minimum.');
 }
-function sanitizedPatch(a: Args): HumanPatch { const p: Args = {}; for (const k of ['originCell', 'rotation', 'variantId', 'targetSofaId', 'linkedDeskId', 'wallAnchor', 'elevationCm']) if (a[k] !== undefined) p[k] = clone(a[k]); return p; }
+function sanitizedPatch(a: Args): HumanPatch { const p: Args = {}; for (const k of ['originCell', 'rotation', 'variantId', 'targetSofaId', 'linkedDeskId', 'attachedOpeningId', 'supportObjectId', 'lightingZone', 'wallAnchor', 'elevationCm']) if (a[k] !== undefined) p[k] = clone(a[k]); return p; }
 export function createStore(initialState: AppState = makeDemo(), options: { beforeNewDocument?: (previous: AppState, next: AppState) => void } = {}) {
   let state = frozen(migrateState(initialState));
   let generating = false;
@@ -96,7 +97,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   };
   const commit = (p: Proposal, extra: Args = {}) => { p.revision++; const next = clone(state); next.proposal = p; publish(next); return envelope(p, extra); };
   const authoritative = (object: Furniture) => object.ownership === 'owned' ? state.inventory.find(o => o.id === object.id) || fail('unknown_owned_instance', 'Owned piece has no authoritative measured inventory record.') : object;
-  const checkPatch = (object: Furniture, patch: HumanPatch, layout: Layout): Furniture => {
+  const checkPatch = (object: Furniture, patch: HumanPatch, layout: Layout, room: Room, rules: Rules): Furniture => {
     if (object.ownership === 'fixed') fail('lock_violation', 'Fixed room fixtures cannot be changed through furniture commands.');
     const source = authoritative(object), locks = source.locked;
     if (patch.originCell && locks.position && !same(patch.originCell, source.originCell)) fail('lock_violation', `${object.label} has a locked position. Only the human can unlock it.`);
@@ -108,7 +109,11 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (patch.appearance && locks.appearance && patch.appearance !== object.appearance) fail('lock_violation', 'Appearance is locked.');
     if (patch.targetSofaId !== undefined && (object.kind !== 'tv' || !layout.furniture.some(o => o.id === patch.targetSofaId && o.kind === 'sofa'))) fail('invalid_id', 'A TV target must refer to a sofa in this layout.');
     if (patch.linkedDeskId !== undefined && (object.kind !== 'chair' || !layout.furniture.some(o => o.id === patch.linkedDeskId && o.kind === 'desk'))) fail('invalid_id', 'A linked desk must exist, and only a chair can link to it.');
-    if ((patch.wallAnchor || patch.elevationCm !== undefined) && object.kind !== 'tv') fail('invalid_property', 'Wall anchors and elevation are editable only for wall TVs in V1.');
+    if (patch.attachedOpeningId !== undefined && (object.kind !== 'window_treatment' || !room.openings.some(o => o.id === patch.attachedOpeningId && o.kind === 'window'))) fail('invalid_id', 'attachedOpeningId must name an existing window, and only a window treatment can use it.');
+    if (patch.supportObjectId !== undefined && (object.kind !== 'table_lamp' || !layout.furniture.some(o => o.id === patch.supportObjectId && canSupportLamp(o)))) fail('invalid_id', 'supportObjectId must name a table, desk or cabinet, and only a table lamp can use it.');
+    if (patch.lightingZone !== undefined && !LIGHT_KINDS.has(object.kind)) fail('invalid_property', 'lightingZone applies only to a lighting fixture.');
+    if (patch.wallAnchor && !['tv', 'wall_light'].includes(object.kind)) fail('invalid_property', 'Only TVs and wall lights accept a direct wallAnchor; window treatments derive it from attachedOpeningId.');
+    if (patch.elevationCm !== undefined && !['tv', 'wall_light'].includes(object.kind)) fail('invalid_property', 'Only TVs and wall lights accept a direct elevation; ceiling and table fixtures derive it from their mount or support.');
     let next = { ...clone(object), ...clone(patch) };
     if (patch.variantId) {
       const v = CATALOGUE.find(v => v.id === patch.variantId) || fail('variant_unavailable', 'Choose an available named size variant.');
@@ -118,10 +123,10 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       // A new catalogue variant is a new role as well as new dimensions. In
       // particular, replacing a wardrobe with a bedside table must not retain
       // the wardrobe tags and satisfy the bedroom brief by accident.
-      next = { ...next, sizeCm: clone(v.sizeCm), label: v.name, tags, sleepSize, backEdge: v.backEdge };
+      next = { ...next, sizeCm: clone(v.sizeCm), label: v.name, tags, sleepSize, backEdge: v.backEdge, fixtureType: v.fixtureType, lightingZone: patch.lightingZone || v.lightingZone };
     }
     if (object.ownership === 'owned') { next.sizeCm = clone(source.sizeCm); next.requiredInRoom = source.requiredInRoom; next.locked = clone(source.locked); next.tags = clone(source.tags); next.sleepSize = source.sleepSize; }
-    return next;
+    return normalizeFixturePlacement(next, room, rules, layout, patch.supportObjectId !== undefined);
   };
   const removeFrom = (layout: Layout, id: string, omitted: Proposal['omitted']) => {
     const object = layout.furniture.find(o => o.id === id) || fail('invalid_id', 'Furniture ID not found.'); const source = authoritative(object);
@@ -136,22 +141,32 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (c.proposalId !== p.id || c.proposalRevision !== p.revision || c.ruleRevision !== state.ruleRevision) fail('revision_conflict', 'Candidate was checked against a different proposal or rule revision.');
     if ((a.objectId && c.objectId !== a.objectId) || (a.variantId && a.variantId !== c.variantId)) fail('invalid_candidate', 'Candidate does not match the requested object or variant.');
     for (const property of ['originCell', 'rotation', 'wallAnchor']) if (a[property] !== undefined && !same(a[property], (c as unknown as Record<string, unknown>)[property])) fail('invalid_candidate', 'Do not override a checked candidate placement.');
-    return { originCell: clone(c.originCell), rotation: c.rotation, ...(c.variantId ? { variantId: c.variantId } : {}), ...(c.linkedDeskId ? { linkedDeskId: c.linkedDeskId } : {}), ...(c.wallAnchor ? { wallAnchor: clone(c.wallAnchor) } : {}) };
+    return { originCell: clone(c.originCell), rotation: c.rotation, ...(c.variantId ? { variantId: c.variantId } : {}), ...(c.linkedDeskId ? { linkedDeskId: c.linkedDeskId } : {}), ...(c.attachedOpeningId ? { attachedOpeningId: c.attachedOpeningId } : {}), ...(c.supportObjectId ? { supportObjectId: c.supportObjectId } : {}), ...(c.lightingZone ? { lightingZone: c.lightingZone } : {}), ...(c.wallAnchor ? { wallAnchor: clone(c.wallAnchor) } : {}) };
   };
   async function search(p: Proposal, a: Args, signal?: AbortSignal, timeLimit = 1800): Promise<{ found: Candidate[]; trials: number; exhausted: boolean }> {
     const existing = a.objectId ? p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Object not found in this proposal.') : undefined;
     if (!existing && !a.variantId) fail('invalid_arguments', 'Supply objectId or variantId.');
     let piece = existing ? clone(existing) : fromVariant(a.variantId, '__candidate__');
-    if (existing && a.variantId) piece = checkPatch(existing, { variantId: a.variantId }, p.layout);
+    if (existing && a.variantId) piece = checkPatch(existing, { variantId: a.variantId }, p.layout, p.room, p.rules);
     if (piece.kind === 'chair' && a.linkedDeskId) piece.linkedDeskId = a.linkedDeskId;
     if (piece.kind === 'tv' && !piece.targetSofaId) piece.targetSofaId = p.layout.furniture.find(o => o.kind === 'sofa')?.id;
+    if (a.attachedOpeningId) piece.attachedOpeningId = a.attachedOpeningId;
+    if (a.supportObjectId) piece.supportObjectId = a.supportObjectId;
+    if (a.lightingZone) piece.lightingZone = a.lightingZone;
+    piece = normalizeFixturePlacement(piece, p.room, p.rules, p.layout, !!a.supportObjectId);
     const base = validate(p.layout, p.room, p.rules, state.inventory, false), baseBlocks = new Set(base.issues.filter(i => i.severity === 'block').map(issueSignature)), baseIssues = new Set(base.issues.map(issueSignature));
     const found: Candidate[] = [], positions: HumanPatch[] = [], seen = new Set<string>(), started = Date.now(); let trials = 0;
     const unit = p.rules.cellCm, cols = Math.floor(p.room.widthCm / unit), rows = Math.floor(p.room.depthCm / unit), requestedLimit = a.limit || 5, candidatePool = Math.min(24, Math.max(12, requestedLimit * 4));
     const locks = authoritative(piece).locked;
-    if (piece.kind === 'tv') {
+    if (piece.kind === 'window_treatment') {
+      if (!piece.attachedOpeningId) fail('invalid_arguments', 'A window treatment search requires attachedOpeningId.');
+      positions.push({ originCell: piece.originCell, rotation: piece.rotation, attachedOpeningId: piece.attachedOpeningId });
+    } else if (piece.kind === 'table_lamp') {
+      if (!piece.supportObjectId) fail('invalid_arguments', 'A table lamp search requires supportObjectId.');
+      positions.push({ originCell: piece.originCell, rotation: piece.rotation, supportObjectId: piece.supportObjectId });
+    } else if (piece.kind === 'tv' || piece.kind === 'wall_light') {
       const sofa = p.layout.furniture.find(o => o.id === piece.targetSofaId);
-      const walls = sofa ? [faces[sofa.rotation], ...(['north', 'west', 'east', 'south'] as const).filter(w => w !== faces[sofa.rotation])] : ['north', 'west', 'east', 'south'] as const;
+      const walls = piece.kind === 'tv' && sofa ? [faces[sofa.rotation], ...(['north', 'west', 'east', 'south'] as const).filter(w => w !== faces[sofa.rotation])] : ['north', 'west', 'east', 'south'] as const;
       for (const wall of walls) for (const segment of wallSegments(p.room).filter(candidate => candidate.wall === wall && candidate.lengthCm >= piece.sizeCm.w)) {
         const b = sofa && bounds(sofa), centre = b ? (segment.horizontal ? b.x + b.w / 2 : b.y + b.d / 2) : segment.lengthCm / 2 + (segment.horizontal ? segment.x1 : segment.y1);
         const start = segment.horizontal ? segment.x1 : segment.y1, centered = Math.max(0, Math.min(segment.lengthCm - piece.sizeCm.w, Math.round((centre - start - piece.sizeCm.w / 2) / unit) * unit));
@@ -235,18 +250,18 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       if (locks.rotation && patch.rotation !== authoritative(piece).rotation) continue;
       trials++;
       let placed: Furniture;
-      try { placed = checkPatch(piece, patch, p.layout); } catch { continue; }
+      try { placed = checkPatch(piece, patch, p.layout, p.room, p.rules); } catch { continue; }
       const testLayout = clone(p.layout); testLayout.furniture = [...testLayout.furniture.filter(o => o.id !== placed.id), placed];
       const report = validate(testLayout, p.room, p.rules, state.inventory, false);
       const relevant = report.issues.filter(i => i.severity === 'block' && i.code !== 'desk_chair_missing' && (i.objectIds.includes(placed.id) || !baseBlocks.has(issueSignature(i))));
       const avoid = a.avoidFlags || []; const occupiedKeys = new Set(rectCells(bounds(placed)).map(c => `${c.x},${c.y}`));
-      const violatesAvoid = placed.kind !== 'tv' && report.cells.some(c => occupiedKeys.has(`${c.x},${c.y}`) && c.flags.some(f => avoid.includes(f)));
+      const violatesAvoid = isFloorOccupant(placed) && report.cells.some(c => occupiedKeys.has(`${c.x},${c.y}`) && c.flags.some(f => avoid.includes(f)));
       if (!relevant.length && !violatesAvoid) {
         const candidateId = `candidate-${++candidateSeq}`, decisionIssues = report.issues.filter(i => i.objectIds.includes(placed.id) || !baseIssues.has(issueSignature(i))), qualityScore = decisionIssues.reduce((sum, i) => sum + issueCost(i), 0);
-        const gaps = placed.kind === 'tv' && placed.wallAnchor ? { north: Infinity, east: Infinity, south: Infinity, west: Infinity, [placed.wallAnchor.wall]: 0 } as Record<Wall, number> : wallGaps(placed, p.room, unit);
-        const backWall = placed.kind === 'tv' && placed.wallAnchor ? placed.wallAnchor.wall : furnitureBackWall(placed), touchingWalls = (Object.keys(gaps) as Wall[]).filter(w => gaps[w] <= 0.5);
-        const frontFacing = placed.kind === 'tv' && placed.wallAnchor ? opposite[placed.wallAnchor.wall] : faces[placed.rotation];
-        candidateReports.set(candidateId, report); found.push({ candidateId, proposalId: p.id, proposalRevision: p.revision, ruleRevision: state.ruleRevision, objectId: existing?.id, variantId: placed.variantId, linkedDeskId: placed.linkedDeskId, originCell: placed.originCell, rotation: placed.rotation, wallAnchor: placed.wallAnchor, checkedRules: report.checkedRules, placementStatus: 'valid', layoutStatus: report.validation.status, qualityScore, frontFacing, backWall, backGapCm: gaps[backWall], touchingWalls, remainingIssues: report.issues.slice(0, 10).map(i => ({ ...i, cells: i.cells.slice(0, 20), cellCount: i.cells.length, hasMoreCells: i.cells.length > 20 })), remainingIssueCount: report.issues.length, hasMoreRemainingIssues: report.issues.length > 10, details: { tool: 'checkLayout', args: { which: 'proposal', revision:p.revision, candidateId, detail:'issues', offset:0, limit:100 } }, brief: report.brief });
+        const wallMounted = ['tv', 'wall_light', 'window_treatment'].includes(placed.kind) && placed.wallAnchor, gaps = wallMounted ? { north: Infinity, east: Infinity, south: Infinity, west: Infinity, [placed.wallAnchor!.wall]: 0 } as Record<Wall, number> : wallGaps(placed, p.room, unit);
+        const backWall = wallMounted ? placed.wallAnchor!.wall : furnitureBackWall(placed), touchingWalls = (Object.keys(gaps) as Wall[]).filter(w => gaps[w] <= 0.5);
+        const frontFacing = wallMounted ? opposite[placed.wallAnchor!.wall] : faces[placed.rotation];
+        candidateReports.set(candidateId, report); found.push({ candidateId, proposalId: p.id, proposalRevision: p.revision, ruleRevision: state.ruleRevision, objectId: existing?.id, variantId: placed.variantId, linkedDeskId: placed.linkedDeskId, attachedOpeningId: placed.attachedOpeningId, supportObjectId: placed.supportObjectId, lightingZone: placed.lightingZone, originCell: placed.originCell, rotation: placed.rotation, wallAnchor: placed.wallAnchor, checkedRules: report.checkedRules, placementStatus: 'valid', layoutStatus: report.validation.status, qualityScore, frontFacing, backWall, backGapCm: gaps[backWall], touchingWalls, remainingIssues: report.issues.slice(0, 10).map(i => ({ ...i, cells: i.cells.slice(0, 20), cellCount: i.cells.length, hasMoreCells: i.cells.length > 20 })), remainingIssueCount: report.issues.length, hasMoreRemainingIssues: report.issues.length > 10, details: { tool: 'checkLayout', args: { which: 'proposal', revision:p.revision, candidateId, detail:'issues', offset:0, limit:100 } }, brief: report.brief });
       }
       if (trials % 8 === 0) await pause();
     }
@@ -321,19 +336,21 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         else if (name === 'setConstraints') { p.rules = { ...p.rules, ...clone(a.constraints) }; checkRules(p.rules); }
         else if (name === 'setAppearance') {
           const group = PALETTES[a.target as keyof typeof PALETTES]; if (!group.some(palette => palette.id === a.paletteId)) fail('invalid_palette', 'Choose an ID from listCatalogue palettes.');
-          if (a.target === 'furniture') { const object = p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Furniture ID not found.'); const updated = checkPatch(object, { appearance: a.paletteId }, p.layout); p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? updated : o); }
+          if (a.target === 'furniture') { const object = p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Furniture ID not found.'); const updated = checkPatch(object, { appearance: a.paletteId }, p.layout, p.room, p.rules); p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? updated : o); }
           else p.layout.appearance[a.target as 'wall' | 'floor'] = a.paletteId;
         } else if (name === 'removeFurniture') removeFrom(p.layout, a.objectId, p.omitted);
         else if (name === 'updateFurniture') {
           const object = p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Furniture ID not found. Fixed features cannot be edited here.');
-          const candidatePatch = resolveCandidate(a, p); const patch = candidatePatch || sanitizedPatch(a); const updated = checkPatch(object, patch, p.layout); p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? updated : o);
+          const candidatePatch = resolveCandidate(a, p); const patch = candidatePatch || sanitizedPatch(a); const updated = checkPatch(object, patch, p.layout, p.room, p.rules); p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? updated : o);
         } else if (name === 'placeFurniture') {
           const candidatePatch = resolveCandidate(a, p); let object: Furniture;
           if (a.ownedId) { if (a.variantId) fail('owned_resize_forbidden', 'Owned pieces cannot use catalogue variants.'); object = clone(state.inventory.find(o => o.id === a.ownedId) || fail('invalid_id', 'Owned inventory ID not found.')); if (p.layout.furniture.some(o => o.id === object.id)) fail('duplicate_owned_instance', 'This owned piece is already in the layout. Use updateFurniture.'); }
           else { const variantId = candidatePatch?.variantId || a.variantId; if (!variantId) fail('invalid_arguments', 'Provide variantId or ownedId.'); object = fromVariant(variantId, `piece-${state.sequence + 1}-${p.revision}`); }
           if (p.layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 movable pieces.');
           if (object.kind === 'tv') object.targetSofaId = a.targetSofaId || p.layout.furniture.find(o => o.kind === 'sofa')?.id;
-          object = checkPatch(object, candidatePatch || sanitizedPatch(a), p.layout); p.layout.furniture.push(object);
+          if (object.kind === 'window_treatment' && !(candidatePatch?.attachedOpeningId || a.attachedOpeningId)) fail('invalid_arguments', 'A window treatment requires attachedOpeningId naming an existing window.');
+          if (object.kind === 'table_lamp' && !(candidatePatch?.supportObjectId || a.supportObjectId)) fail('invalid_arguments', 'A table lamp requires supportObjectId naming a table, desk or cabinet.');
+          object = checkPatch(object, candidatePatch || sanitizedPatch(a), p.layout, p.room, p.rules); p.layout.furniture.push(object);
           p.omitted = p.omitted.filter(o => o.objectId !== object.id);
         } else if (name === 'proposeLayout') {
           const profile = p.room.profile || { kind: 'lounge' as const };
@@ -343,7 +360,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           const requested: string[] = a.variantIds || defaults;
           requested.forEach(id => { if (!CATALOGUE.some(v => v.id === id)) fail('variant_unavailable', `Unknown catalogue variant: ${id}.`); });
           (a.quantities || []).forEach((q: { variantId: string }) => { if (!CATALOGUE.some(v => v.id === q.variantId)) fail('variant_unavailable', `Unknown catalogue variant: ${q.variantId}.`); });
-          const priority: Record<string, number> = { sofa: 1, tv: 2, bed: 2, desk: 3, chair: 4, storage: 5, coffee_table: 6, table: 6, plant: 7, rug: 8 };
+          const priority: Record<string, number> = { sofa: 1, tv: 2, bed: 2, desk: 3, chair: 4, storage: 5, window_treatment: 5, ceiling_light: 5, wall_light: 5, floor_lamp: 6, table_lamp: 6, coffee_table: 6, table: 6, plant: 7, rug: 8 };
           // Explicit quantities are targets for their variants, not additions
           // to defaults or repeated retries. This keeps a request for two
           // nightstands at two even when the bedroom profile has that default.
@@ -357,7 +374,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
             const report = validate(p.layout, p.room, p.rules, state.inventory); if (!report.issues.some(i => i.severity === 'block' && i.objectIds.includes(object.id))) continue;
             if (Date.now() - start > 6500) break;
             const found = await search(p, { objectId: object.id, limit: 1 }, signal, 900); trials += found.trials;
-            if (found.found[0]) { const c = found.found[0]; const patch = { originCell: c.originCell, rotation: c.rotation, ...(c.wallAnchor ? { wallAnchor: c.wallAnchor } : {}) }; p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? checkPatch(o, patch, p.layout) : o); }
+            if (found.found[0]) { const c = found.found[0]; const patch = { originCell: c.originCell, rotation: c.rotation, ...(c.wallAnchor ? { wallAnchor: c.wallAnchor } : {}), ...(c.attachedOpeningId ? { attachedOpeningId: c.attachedOpeningId } : {}), ...(c.supportObjectId ? { supportObjectId: c.supportObjectId } : {}) }; p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? checkPatch(o, patch, p.layout, p.room, p.rules) : o); }
           }
           for (const [requestIndex, variantId] of wanted.entries()) {
             const v = CATALOGUE.find(v => v.id === variantId)!;
@@ -378,10 +395,15 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
             const needsWorkstation = profile.kind === 'home_office' || (profile.kind === 'bedroom' && profile.workspace);
             if (v.kind === 'chair' && needsWorkstation && !p.layout.furniture.some(desk => desk.kind === 'desk')) { p.omitted.push({ variantId, reason: `Instance ${requestedQuantity} omitted: no desk remains for this work chair.` }); continue; }
             if (signal?.aborted) fail('cancelled', 'Planning cancelled without committing.');
-            const found = Date.now() - start > 6500 ? { found: [] as Candidate[], trials: 0 } : await search(p, { variantId, limit: 1 }, signal, 1100); trials += found.trials;
+            const relationArgs = v.kind === 'window_treatment' ? { attachedOpeningId: p.room.openings.filter(o => o.kind === 'window')[requestedQuantity - 1]?.id || p.room.openings.find(o => o.kind === 'window')?.id }
+              : v.kind === 'table_lamp' ? { supportObjectId: p.layout.furniture.find(canSupportLamp)?.id } : {};
+            if (v.kind === 'window_treatment' && !relationArgs.attachedOpeningId) { p.omitted.push({ variantId, reason: 'Window treatment omitted: this room has no window to attach it to.' }); continue; }
+            if (v.kind === 'table_lamp' && !('supportObjectId' in relationArgs && relationArgs.supportObjectId)) { p.omitted.push({ variantId, reason: 'Table lamp omitted: no table, desk or cabinet is present to support it.' }); continue; }
+            const found = Date.now() - start > 6500 ? { found: [] as Candidate[], trials: 0 } : await search(p, { variantId, limit: 1, ...relationArgs }, signal, 1100); trials += found.trials;
             if (found.found[0]) {
               const c = found.found[0], object = fromVariant(variantId, `planned-${p.id}-${p.revision}-${variantId}-${requestIndex + 1}`);
-              Object.assign(object, { originCell: c.originCell, rotation: c.rotation }); if (c.wallAnchor) object.wallAnchor = c.wallAnchor;
+              Object.assign(object, { originCell: c.originCell, rotation: c.rotation, ...(c.attachedOpeningId ? {attachedOpeningId:c.attachedOpeningId} : {}), ...(c.supportObjectId ? {supportObjectId:c.supportObjectId} : {}), ...(c.lightingZone ? {lightingZone:c.lightingZone} : {}) }); if (c.wallAnchor) object.wallAnchor = c.wallAnchor;
+              Object.assign(object, normalizeFixturePlacement(object, p.room, p.rules, p.layout, !!c.supportObjectId));
               if (object.kind === 'tv') object.targetSofaId = p.layout.furniture.find(o => o.kind === 'sofa')?.id;
               if (object.kind === 'chair') { const desk = [...p.layout.furniture].reverse().find(o => o.kind === 'desk' && !p.layout.furniture.some(chair => chair.kind === 'chair' && chair.linkedDeskId === o.id)); if (desk) object.linkedDeskId = desk.id; }
               p.layout.furniture.push(object);
@@ -394,7 +416,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
                 else { p.layout.furniture = p.layout.furniture.filter(o => o.id !== object.id); p.omitted.push({ variantId, reason: 'Desk omitted because no linked chair could be placed in the same bounded work arrangement.' }); }
               }
             }
-            else { const smaller = CATALOGUE.filter(x => x.kind === v.kind && x.sizeCm.w * x.sizeCm.d < v.sizeCm.w * v.sizeCm.d).sort((a, b) => b.sizeCm.w * b.sizeCm.d - a.sizeCm.w * a.sizeCm.d)[0]; const checkedSmaller = smaller && Date.now() - start <= 6500 ? await search(p,{variantId:smaller.id,limit:1},signal,600) : undefined; trials += checkedSmaller?.trials || 0; p.omitted.push({ variantId, reason: `No placement found in this bounded greedy scan. ${p.rules.requiredKinds.includes(v.kind) ? 'This required function is still missing.' : 'Optional piece omitted.'} Not proof of infeasibility.`, ...(smaller && checkedSmaller?.found[0] ? { alternativeVariantId: smaller.id, alternativeChecked: { trials:checkedSmaller.trials, placementStatus:'valid', layoutStatus:checkedSmaller.found[0].layoutStatus, proposalRevision:p.revision, ruleRevision:state.ruleRevision } } : {}) }); }
+            else { const relational = v.kind === 'window_treatment' || v.kind === 'table_lamp', smaller = !relational && CATALOGUE.filter(x => x.kind === v.kind && x.sizeCm.w * x.sizeCm.d < v.sizeCm.w * v.sizeCm.d).sort((a, b) => b.sizeCm.w * b.sizeCm.d - a.sizeCm.w * a.sizeCm.d)[0]; const checkedSmaller = smaller && Date.now() - start <= 6500 ? await search(p,{variantId:smaller.id,limit:1},signal,600) : undefined; trials += checkedSmaller?.trials || 0; p.omitted.push({ variantId, reason: `No placement found in this bounded greedy scan. ${p.rules.requiredKinds.includes(v.kind) ? 'This required function is still missing.' : 'Optional piece omitted.'} Not proof of infeasibility.`, ...(smaller && checkedSmaller?.found[0] ? { alternativeVariantId: smaller.id, alternativeChecked: { trials:checkedSmaller.trials, placementStatus:'valid', layoutStatus:checkedSmaller.found[0].layoutStatus, proposalRevision:p.revision, ruleRevision:state.ruleRevision } } : {}) }); }
           }
           if (signal?.aborted) fail('cancelled', 'Planning cancelled without committing.'); guard(a, 'layout'); result = commit(p, { planner: { kind: 'deterministic_bounded_greedy', trials, elapsedMs: Date.now() - start, complete: validate(p.layout, p.room, p.rules, state.inventory).validation.hardFailures === 0 && validate(p.layout, p.room, p.rules, state.inventory).brief.status === 'satisfied' } });
           return result;
@@ -466,21 +488,27 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     const inputError = validateSchema({ proposalId: 'human', revision: 1, objectId: id, ...Object.fromEntries(Object.entries(patch).filter(([k]) => k !== 'appearance')) }, TOOL_SCHEMAS.updateFurniture.inputSchema); if (inputError) fail('invalid_arguments', inputError);
     if (patch.appearance && !PALETTES.furniture.some(p => p.id === patch.appearance)) fail('invalid_palette', 'Unknown palette.');
     const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Choose a layout proposal to edit furniture.');
-    const object = layout.furniture.find(o => o.id === id) || fail('invalid_id', 'Furniture ID not found.'); layout.furniture = layout.furniture.map(o => o.id === id ? checkPatch(object, patch, layout) : o);
+    const room = which === 'current' ? next.room : next.proposal!.room, rules = which === 'current' ? next.rules : next.proposal!.rules;
+    const object = layout.furniture.find(o => o.id === id) || fail('invalid_id', 'Furniture ID not found.'); layout.furniture = layout.furniture.map(o => o.id === id ? checkPatch(object, patch, layout, room, rules) : o);
     if (which === 'current') next.currentRevision++; else next.proposal!.revision++;
     publish(next); return which === 'proposal' ? envelope(next.proposal!) : { operationSucceeded: true, currentRevision: state.currentRevision };
   });
   const humanAdd = (which: 'current' | 'proposal', variantId: string, patch?: HumanPatch, rejectInvalid = false) => human(() => {
     guardHuman(which);
-    const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Create a layout proposal first.');
+    const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Create a layout proposal first.'), room = which === 'current' ? next.room : next.proposal!.room, rules = which === 'current' ? next.rules : next.proposal!.rules;
     if (layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 pieces.'); next.sequence++;
     const o = fromVariant(variantId, `human-${next.sequence}`), sofa = layout.furniture.find(f => f.kind === 'sofa');
     if (o.kind === 'tv') { o.targetSofaId = sofa?.id; if (sofa) { const b = bounds(sofa), wall = faces[sofa.rotation], centre = wall === 'north' || wall === 'south' ? b.x + b.w / 2 : b.y + b.d / 2; o.wallAnchor = anchorForDirection(which === 'current' ? next.room : next.proposal!.room, wall, centre, o.sizeCm.w) || undefined; } }
     else if (o.kind === 'desk') { o.originCell = { x: 0, y: 4 }; o.rotation = 270; }
     else if (o.kind === 'coffee_table' && sofa) { const b = bounds(sofa); o.originCell = { x: Math.round((b.x + b.w / 2 - o.sizeCm.w / 2) / 20), y: Math.max(0, Math.floor((b.y - state.rules.walkHardCm - o.sizeCm.d) / 20)) }; }
     else if (o.kind === 'rug' && sofa) { const b = bounds(sofa); o.originCell = { x: Math.max(0, Math.floor((b.x + b.w / 2 - o.sizeCm.w / 2) / 20)), y: Math.max(0, Math.floor((b.y - o.sizeCm.d + 40) / 20)) }; }
+    else if (o.kind === 'window_treatment') { const window = room.openings.find(opening => opening.kind === 'window') || fail('window_required', 'Add a window in Room inputs before adding curtains or a blind.'); o.attachedOpeningId = window.id; }
+    else if (o.kind === 'wall_light') { const segment = [...wallSegments(room)].sort((a,b)=>b.lengthCm-a.lengthCm)[0]; o.wallAnchor = { wall: segment.wall, offsetCm: Math.max(0, (segment.lengthCm-o.sizeCm.w)/2), ...(room.floorPlan ? {segmentId:segment.id} : {}) }; }
+    else if (o.kind === 'table_lamp') { const support = layout.furniture.find(canSupportLamp) || fail('support_required', 'Add a table, desk or cabinet before adding a table lamp.'); o.supportObjectId = support.id; }
+    else if (o.kind === 'ceiling_light') { const own = bounds(o, rules.cellCm); let found = false; for (let y=1;y<Math.ceil(room.depthCm/rules.cellCm)&&!found;y++) for(let x=1;x<Math.ceil(room.widthCm/rules.cellCm)&&!found;x++){const candidate={x:x*rules.cellCm-own.w/2,y:y*rules.cellCm-own.d/2,w:own.w,d:own.d};if(rectInsideRoom(room,candidate)){o.originCell={x:candidate.x/rules.cellCm,y:candidate.y/rules.cellCm};found=true;}} }
     else o.originCell = { x: 2, y: 2 };
-    const placed = patch ? checkPatch(o, patch, layout) : o;
+    const base = normalizeFixturePlacement(o, room, rules, layout, o.kind === 'table_lamp');
+    const placed = patch ? checkPatch(base, patch, layout, room, rules) : base;
     if (rejectInvalid) {
       const before = validate(layout, which === 'current' ? next.room : next.proposal!.room, which === 'current' ? next.rules : next.proposal!.rules, next.inventory);
       const baseline = new Set(before.issues.filter(i => i.severity === 'block').map(issueSignature));

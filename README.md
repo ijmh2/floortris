@@ -18,6 +18,13 @@ Agents can also translate a dimensioned sketch into a custom rectilinear outline
 top-left origin; the page derives named wall segments, validates the polygon, and
 uses the resulting boundary in 2D, 3D, openings, furniture fit and walking routes.
 
+The shared catalogue also includes measured window treatments and lighting.
+Curtains and blinds attach to a named window; wall lights attach to a named wall
+segment; table lamps attach to a measured support. Pendant, flush, track and
+recessed ceiling fixtures are checked against the actual rectilinear ceiling, while
+floor lamps use the normal collision and walking rules. All fixtures appear in 2D
+and 3D and remain proposal edits until the human applies the reviewed revision.
+
 All registered tool descriptions repeat the human approval boundary. Generation
 returns a `review` record with `applied: false`, `requiresHumanApply: true`, and a
 revision-bound `checkLayout` call. Agents should verify the visible room and report
@@ -83,8 +90,10 @@ npm run test:native -- https://floortris.floortris.workers.dev/
 It launches Chrome with the required flags, asserts all 15 tools register and
 carry annotations, then exercises the `generateRoom` hero flow through
 `document.modelContext.executeTool`: a new custom-outline proposal is generated,
-checked, and verified to remain human-Apply-only. It also confirms stale writes
-are refused and that Apply, Confirm, Discard and Unlock are not native tools.
+a window blind and recessed ceiling light are placed through the native transport,
+and the result is checked and verified to remain human-Apply-only. It also confirms
+stale writes are refused and that Apply, Confirm, Discard and Unlock are not native
+tools.
 
 The native call contract, for anyone writing their own client:
 
@@ -101,7 +110,7 @@ JSON string. Passing a tool name, a plain object, or `{arguments: ...}` fails wi
 
 - `app/`: application entry and site metadata; `middleware.ts` supplies the platform-routed request origin for absolute social-card URLs, without trusting forwarded host headers.
 - `components/floortris/FloortrisApp.tsx` and `floortris.css`: board, manual editing, measured-owned entry, catalogue, proposals/comparison, setup review, and exact-revision Apply.
-- `components/floortris/model.ts`, `floorplan.ts`, `data.ts`, `engine.ts`: domain model, rectilinear polygon geometry, sample catalogue, and pure shared rules.
+- `components/floortris/model.ts`, `floorplan.ts`, `fixture-placement.ts`, `data.ts`, `engine.ts`: domain model, rectilinear polygon and fixture geometry, sample catalogue, and pure shared rules.
 - `components/floortris/schemas.ts`, `store.ts`, `webmcp.ts`: strict tool schemas, authoritative commands, and native registration.
 - Tests in `components/floortris/` cover the shared engine, command authority, native adapter, rendering geometry, room input editing and history. Run `npm test` for the current count.
 
@@ -208,6 +217,7 @@ The provided demo takes **four checked placements**: wall TV, compact desk, low 
 - Furniture appearance is editable in the human inspector. Wall and floor finishes are editable there too, in the room panel shown when no piece is selected, through the same palette IDs `setAppearance` accepts. Appearance never changes geometry, height classes or rule flags, but it does advance the revision a reviewer must have seen before Apply.
 - A stale draft must be discarded and recreated. There is no automatic rebase. Only one active setup/layout draft is supported at once. Undo/redo holds up to 50 complete document states for the current session. Restoring content advances authority revisions and issues fresh proposal IDs, so old agent commands and Apply buttons do not regain validity.
 - Native calls have no backend, no secrets, no external APIs or real purchasing. The UI's bounded local planner is page code, never an external agent conversation.
+- Curtains model one static shallow projection and blinds model a closed fitted plane; Floortris does not simulate fabric movement, blind controls, daylight or radiator heat. Lighting checks mount geometry, a disclosed 200 cm planning head-clearance assumption and simple seating/reading/circulation proximity. They are not photometric, glare, wiring, load, electrical-code or building-code calculations. Ceiling fixtures are emissive visual models rather than a physical light simulation.
 - Room data is saved in `localStorage`; the original lounge retains `floortris.v1.local` and the 3 m lounge retains `floortris.v1.sample.3m`. Every additional preset has an independent `floortris.v2.sample.*` key. Both V1 and V2 documents reload without resetting; migration adds a missing lounge profile without rewriting furniture or revisions. Export downloads JSON; Import validates a JSON export under 1 MB and opens it as a separate local room. There is no cloud synchronization. Creation, placement and opted-in planner idempotency caches are session-local and bounded to 100 requests; they do not survive page reload.
 
 These are product planning assumptions, not accessibility certification, building/fire regulation advice, radiator safety guidance, sunlight analysis or a surveyed real room.

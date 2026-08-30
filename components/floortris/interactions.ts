@@ -3,14 +3,14 @@ import { bounds, validate } from './engine.ts';
 import { clone, type AppState, type Furniture, type GridCell, type Issue, type Layout, type Room, type Rules } from './model.ts';
 import { nearestWallAnchor } from './floorplan.ts';
 export type OverlayMode = 'furniture' | 'height' | 'walk' | 'tv' | 'doors';
-export type PlacementPatch = Partial<Pick<Furniture, 'originCell' | 'rotation' | 'variantId' | 'wallAnchor'>>;
+export type PlacementPatch = Partial<Pick<Furniture, 'originCell' | 'rotation' | 'variantId' | 'wallAnchor' | 'attachedOpeningId' | 'supportObjectId' | 'lightingZone' | 'elevationCm'>>;
 export const editStamp = (s: AppState, which: 'current' | 'proposal') => `${s.currentRevision}:${s.ruleRevision}:${which === 'proposal' ? `${s.proposal?.id}:${s.proposal?.revision}` : 'current'}`;
 export function wallSnap(room: Room, width: number, xCm: number, yCm: number): Furniture['wallAnchor'] {
   return nearestWallAnchor(room, width, xCm, yCm);
 }
 export function dropPiece(variantId: string, room: Room, layout: Layout, xCm: number, yCm: number): Furniture {
   const piece = fromVariant(variantId,'__drop__');
-  if(piece.kind === 'tv') { piece.wallAnchor=wallSnap(room,piece.sizeCm.w,xCm,yCm);piece.targetSofaId=layout.furniture.find(f=>f.kind==='sofa')?.id; }
+  if(piece.kind === 'tv' || piece.kind === 'wall_light') { piece.wallAnchor=wallSnap(room,piece.sizeCm.w,xCm,yCm);if(piece.kind==='tv')piece.targetSofaId=layout.furniture.find(f=>f.kind==='sofa')?.id; }
   else piece.originCell={x:Math.round((xCm-piece.sizeCm.w/2)/20),y:Math.round((yCm-piece.sizeCm.d/2)/20)};
   return piece;
 }

@@ -16,6 +16,12 @@ Give the agent a dimensioned sketch and it can also recreate an L-shaped room,
 alcove or nook as a validated rectilinear outline. The same missing corners are
 absent from the visible 2D floor, the 3D model, walking routes and placement search.
 
+The agent can finish that shell with measured curtains or blinds linked to a real
+window and with ceiling, wall, floor and table lighting. Each mounting relationship
+is explicit: a sconce names a derived wall segment, a table lamp names its support,
+and a ceiling fixture must stay inside the actual L-shaped ceiling. These fixtures
+use the same proposal/revision boundary and are rendered in both 2D and 3D.
+
 ## Why WebMCP fits this problem
 
 **The floorplan is the product.** Delete the page and keep an API and you have
@@ -83,6 +89,9 @@ blocks the floor), door sweep versus open leaf and adjacent wall attachments,
 clearance-aware flood fill for walking routes, and activity zones that must
 connect to the entrance. Sofa/table gaps, usable bed sides, linked desk chairs
 and explicit furniture back edges are checked as relationships rather than labels.
+Window treatments are linked to openings; wall and table lights are linked to
+mounts or supports; ceiling lights respect custom outlines. Lighting-zone feedback
+is disclosed proximity guidance, not a photometric or electrical-code claim.
 Unknown heights fail closed. Search is bounded — `findPlacements` returns only
 engine-checked candidates, ranks functional geometry above decorative preferences,
 and never claims a layout is impossible.
@@ -113,8 +122,8 @@ works — you simply cannot discover the tools.
 
 ## What it does not claim
 
-Not accessibility certification, not building or fire regulations, no optical TV
-visibility or sunlight modelling, no real purchasable SKUs. Rectangular and
+Not accessibility certification, not building, fire or electrical regulations, no
+optical TV visibility, sunlight, lux, glare or wiring modelling, no real purchasable SKUs. Rectangular and
 custom rectilinear rooms, quarter turns, 20 cm cells; no curves, diagonals,
 holes or multi-room plans. These limits are stated in the product itself, not
 buried here.

@@ -3,7 +3,11 @@ export type FloorPoint = { xCm: number; yCm: number };
 export type FloorPlan = { kind: 'rectilinear'; points: FloorPoint[] };
 export type Wall = 'north' | 'east' | 'south' | 'west';
 export type WallAnchor = { wall: Wall; offsetCm: number; segmentId?: string };
-export type Kind = 'sofa' | 'chair' | 'table' | 'coffee_table' | 'desk' | 'storage' | 'bed' | 'tv' | 'rug' | 'plant' | 'radiator' | 'basin' | 'toilet' | 'shower' | 'bath' | 'towel_rail' | 'other';
+export type Kind = 'sofa' | 'chair' | 'table' | 'coffee_table' | 'desk' | 'storage' | 'bed' | 'tv' | 'rug' | 'plant'
+  | 'window_treatment' | 'ceiling_light' | 'wall_light' | 'floor_lamp' | 'table_lamp'
+  | 'radiator' | 'basin' | 'toilet' | 'shower' | 'bath' | 'towel_rail' | 'other';
+export type FixtureType = 'curtains' | 'blind' | 'pendant' | 'flush' | 'track' | 'recessed' | 'wall_sconce' | 'floor_lamp' | 'table_lamp';
+export type LightingZone = 'ambient' | 'seating' | 'reading' | 'circulation';
 export type RoomProfile =
   | { kind: 'lounge' }
   | { kind: 'bedroom'; sleeping: 'single' | 'double' | 'king'; workspace: boolean; storage: boolean; bedsideQuantity?: number }
@@ -20,6 +24,14 @@ export type Furniture = {
   elevationCm: number; wallAnchor?: WallAnchor;
   locked: { position?: boolean; size?: boolean; rotation?: boolean; appearance?: boolean };
   appearance: string; requiredInRoom: boolean; targetSofaId?: string; linkedDeskId?: string;
+  /** A window treatment must name the window it was measured for. */
+  attachedOpeningId?: string;
+  /** A table lamp must name the table, desk or cabinet carrying its weight. */
+  supportObjectId?: string;
+  /** Explicit semantic subtype; unlike a visual form this participates in validation. */
+  fixtureType?: FixtureType;
+  /** Intended design role only; this is not a lux or electrical calculation. */
+  lightingZone?: LightingZone;
   tags: string[]; sleepSize?: 'single' | 'double' | 'king'; conceptualOnly?: boolean; clearance?: { label: string; rect: Rect };
 };
 export type Door = { id: string; kind: 'door'; wall: Wall; segmentId?: string; offsetCm: number; widthCm: number; hinge: 'start' | 'end'; swing: 'in' | 'out'; angle: 90; mechanism: 'hinged' | 'pocket' | 'bifold' | 'sliding'; entrance: boolean };
@@ -42,7 +54,7 @@ export type Rect = { x: number; y: number; w: number; d: number };
 export type ActivityZone = { id: string; objectId: string; label: string; rect: Rect; reachable: boolean; preferredReachable: boolean; cells: Cell[]; purpose?: string };
 export type BriefRequirement = { key: string; label: string; quantity: number; met: number; source: 'layout' | 'fixed_fixture' | 'relationship'; required: boolean };
 export type Report = { validation: { status: 'ok' | 'warnings' | 'blocked'; hardFailures: number; warnings: number }; brief: { status: 'satisfied' | 'incomplete'; missingRequired: string[]; requirements?: BriefRequirement[] }; issues: Issue[]; cells: GridCell[]; zones: ActivityZone[]; columns: number; rows: number; flagsSummary: Record<string, number>; checkedRules: string[]; clearances: { hardRequestedCm: number; hardEffectiveCm: number; preferredRequestedCm: number; preferredEffectiveCm: number }; openFloorM2: number; conceptualOnly?: boolean };
-export type Candidate = { candidateId: string; proposalId: string; proposalRevision: number; ruleRevision: number; objectId?: string; variantId?: string; linkedDeskId?: string; originCell: Cell; rotation: Rotation; wallAnchor?: Furniture['wallAnchor']; checkedRules: string[]; placementStatus: 'valid'; layoutStatus: Report['validation']['status']; qualityScore: number; frontFacing: Wall; backWall: Wall; backGapCm: number; touchingWalls: Wall[]; remainingIssues: Issue[]; remainingIssueCount: number; hasMoreRemainingIssues: boolean; details: { tool: string; args: Record<string, unknown> }; brief: Report['brief'] };
+export type Candidate = { candidateId: string; proposalId: string; proposalRevision: number; ruleRevision: number; objectId?: string; variantId?: string; linkedDeskId?: string; attachedOpeningId?: string; supportObjectId?: string; lightingZone?: LightingZone; originCell: Cell; rotation: Rotation; wallAnchor?: Furniture['wallAnchor']; checkedRules: string[]; placementStatus: 'valid'; layoutStatus: Report['validation']['status']; qualityScore: number; frontFacing: Wall; backWall: Wall; backGapCm: number; touchingWalls: Wall[]; remainingIssues: Issue[]; remainingIssueCount: number; hasMoreRemainingIssues: boolean; details: { tool: string; args: Record<string, unknown> }; brief: Report['brief'] };
 export type ToolLogEntry = { seq: number; at: number; ms: number; name: string; args: string; ok: boolean; errorCode?: string; revision?: number; status?: string; validationStatus?: string; hardFailures?: number; readOnly: boolean };
 export type CommandResult = { operationSucceeded: boolean; error?: { code: string; message: string }; [key: string]: unknown };
 export const clone = <T,>(value: T): T => structuredClone(value);

@@ -63,11 +63,25 @@ try {
         { xCm: 300, yCm: 300 }, { xCm: 300, yCm: 500 }, { xCm: 0, yCm: 500 },
       ] },
       profile: { kind: 'lounge' },
-      openings: [{ id: 'entrance', kind: 'door', wall: 'south', segmentId: 'wall-5', offsetCm: 20, widthCm: 100, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true }],
+      openings: [
+        { id: 'entrance', kind: 'door', wall: 'south', segmentId: 'wall-5', offsetCm: 20, widthCm: 100, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true },
+        { id: 'native-window', kind: 'window', wall: 'north', segmentId: 'wall-1', offsetCm: 160, widthCm: 120, sillCm: 90, headCm: 220, type: 'fixed', windowAccess: false },
+      ],
       idempotencyKey: 'native-generate-' + Date.now(),
     });
     const draft = { proposalId: generated.proposalId, revision: generated.revision };
+    const blind = await call('placeFurniture', {
+      ...draft, variantId: 'line-blind-160', attachedOpeningId: 'native-window',
+      idempotencyKey: 'native-blind-' + Date.now(),
+    });
+    draft.revision = blind.revision;
+    const ceiling = await call('placeFurniture', {
+      ...draft, variantId: 'dot-recessed-12', originCell: { x: 5, y: 5 }, lightingZone: 'ambient',
+      idempotencyKey: 'native-ceiling-' + Date.now(),
+    });
+    draft.revision = ceiling.revision;
     const generatedRoom = await call('getRoomState', { which: 'proposal' });
+    const fixtures = await call('listFurniture', { which: 'proposal' });
     const checked = await call('checkLayout', { which: 'proposal', detail: 'issues' });
     const stale = await call('setAppearance', { proposalId: draft.proposalId, revision: 1, target: 'wall', paletteId: 'warm' });
     const humanOnlyAbsent = ['applyProposal', 'confirmSetup', 'discardProposal', 'humanSetLocks'].every(name => !byName.has(name));
@@ -82,6 +96,10 @@ try {
       humanOnlyAbsent, review: generated.review,
       customPointCount: generatedRoom.room?.floorPlan?.points?.length,
       customSegmentCount: generatedRoom.wallSegments?.length,
+      blindSucceeded: blind.operationSucceeded,
+      ceilingSucceeded: ceiling.operationSucceeded,
+      blindLinked: fixtures.furniture?.some(item => item.fixtureType === 'blind' && item.attachedOpeningId === 'native-window'),
+      ceilingMounted: fixtures.furniture?.some(item => item.fixtureType === 'recessed' && item.kind === 'ceiling_light'),
     };
   }, EXPECTED_TOOLS);
 
@@ -92,6 +110,8 @@ try {
   check('generateRoom opens a human-review proposal', result.generatedSucceeded && result.review?.requiresHumanApply === true && result.review?.applied === false);
   check('custom outline returns six authoritative wall segments', result.customPointCount === 6 && result.customSegmentCount === 6,
     `points=${result.customPointCount}, segments=${result.customSegmentCount}`);
+  check('native blind attaches to its measured window', result.blindSucceeded && result.blindLinked);
+  check('native recessed light mounts inside the custom ceiling', result.ceilingSucceeded && result.ceilingMounted);
   check('generated proposal reaches ready_for_review', result.plannedStatus === 'ready_for_review', `status=${result.plannedStatus}`);
   check('generated layout has no hard failures', result.plannedBlocking === 0, `blocking=${result.plannedBlocking}`);
   // Soft warnings are expected and fine here: the L-shape exercises wall-backed
