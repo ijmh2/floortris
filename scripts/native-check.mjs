@@ -57,12 +57,12 @@ try {
     const room = await call('getRoomState', { which: 'current' });
     // Exercise the product's primary agent path, not just the older draft flow.
     const generated = await call('generateRoom', {
-      name: 'Native-check L room', widthCm: 500, depthCm: 500,
+      name: 'Native-check sectional room', widthCm: 800, depthCm: 700,
       floorPlan: { kind: 'rectilinear', points: [
-        { xCm: 0, yCm: 0 }, { xCm: 500, yCm: 0 }, { xCm: 500, yCm: 300 },
-        { xCm: 300, yCm: 300 }, { xCm: 300, yCm: 500 }, { xCm: 0, yCm: 500 },
+        { xCm: 0, yCm: 0 }, { xCm: 800, yCm: 0 }, { xCm: 800, yCm: 500 },
+        { xCm: 600, yCm: 500 }, { xCm: 600, yCm: 700 }, { xCm: 0, yCm: 700 },
       ] },
-      profile: { kind: 'lounge' },
+      profile: { kind: 'home_office', seating: false, storage: false },
       openings: [
         { id: 'entrance', kind: 'door', wall: 'south', segmentId: 'wall-5', offsetCm: 20, widthCm: 100, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true },
         { id: 'native-window', kind: 'window', wall: 'north', segmentId: 'wall-1', offsetCm: 160, widthCm: 120, sillCm: 90, headCm: 220, type: 'fixed', windowAccess: false },
@@ -81,8 +81,13 @@ try {
     });
     draft.revision = ceiling.revision;
     const custom = await call('createCustomFurniture', {
-      ...draft, label: 'Native measured planter', kind: 'plant', widthCm: 37, depthCm: 29, heightCm: 45,
-      positionCm: { xCm: 300, yCm: 20 }, rotation: 0, appearance: 'clay',
+      ...draft, label: 'Native U sectional', kind: 'sofa', widthCm: 400, depthCm: 240, heightCm: 85,
+      positionCm: { xCm: 140, yCm: 20 }, rotation: 0, appearance: 'clay',
+      geometry: { type: 'sectional', primaryFacing: 'south', modules: [
+        { id: 'left-return', type: 'chaise', xCm: 0, yCm: 0, widthCm: 80, depthCm: 240, heightCm: 85, facing: 'east' },
+        { id: 'centre', type: 'seat', xCm: 80, yCm: 0, widthCm: 240, depthCm: 80, heightCm: 85, facing: 'south' },
+        { id: 'right-return', type: 'chaise', xCm: 320, yCm: 0, widthCm: 80, depthCm: 240, heightCm: 85, facing: 'west' },
+      ] },
       idempotencyKey: 'native-custom-' + Date.now(),
     });
     draft.revision = custom.revision;
@@ -108,7 +113,9 @@ try {
       customReview: custom.review,
       blindLinked: fixtures.furniture?.some(item => item.fixtureType === 'blind' && item.attachedOpeningId === 'native-window'),
       ceilingMounted: fixtures.furniture?.some(item => item.fixtureType === 'recessed' && item.kind === 'ceiling_light'),
-      customMeasured: fixtures.furniture?.some(item => item.ownership === 'custom' && item.label === 'Native measured planter' && item.sizeCm?.w === 37 && item.sizeCm?.d === 29 && item.sizeCm?.h === 45 && item.customProvenance?.tool === 'createCustomFurniture'),
+      customMeasured: fixtures.furniture?.some(item => item.ownership === 'custom' && item.label === 'Native U sectional' && item.sizeCm?.w === 400 && item.sizeCm?.d === 240 && item.sizeCm?.h === 85 && item.customProvenance?.tool === 'createCustomFurniture' && item.geometry?.type === 'sectional' && item.geometry?.modules?.length === 3
+        && item.geometry.modules[0].xCm + item.geometry.modules[0].widthCm === item.geometry.modules[1].xCm
+        && item.geometry.modules[1].xCm + item.geometry.modules[1].widthCm === item.geometry.modules[2].xCm),
     };
   }, EXPECTED_TOOLS);
 

@@ -175,6 +175,6 @@ test('native schema exposes the strict custom contract', () => {
   const schema = TOOL_SCHEMAS.createCustomFurniture;
   assert.equal(schema.readOnly, false); assert.match(schema.description, /human Apply|No arbitrary tags/i);
   assert.equal(validateSchema({ proposalId: 'p', revision: 1, label: 'x', kind: 'table', widthCm: 40, depthCm: 40, heightCm: 40, positionCm: { xCm: 0, yCm: 0 }, rotation: 0, appearance: 'oak', idempotencyKey: 'k' }, schema.inputSchema), null);
-  assert.match(validateSchema({ proposalId: 'p', revision: 1, label: 'x', kind: 'rug', widthCm: 40, depthCm: 40, heightCm: 1, positionCm: { xCm: 0, yCm: 0 }, rotation: 0, appearance: 'oak', idempotencyKey: 'k' }, schema.inputSchema) || '', /must be one of/);
-  assert.match(validateSchema({ proposalId: 'p', revision: 1, label: 'x', kind: 'other', widthCm: 40, depthCm: 40, heightCm: 40, positionCm: { xCm: 0, yCm: 0 }, rotation: 0, appearance: 'oak', idempotencyKey: 'k' }, schema.inputSchema) || '', /must be one of/);
+  assert.match(validateSchema({ proposalId: 'p', revision: 1, label: 'x', kind: 'rug', widthCm: 40, depthCm: 40, heightCm: 1, positionCm: { xCm: 0, yCm: 0 }, rotation: 0, appearance: 'oak', idempotencyKey: 'k' }, schema.inputSchema) || '', /must be one of|does not match/);
+  assert.match(validateSchema({ proposalId: 'p', revision: 1, label: 'x', kind: 'other', widthCm: 40, depthCm: 40, heightCm: 40, positionCm: { xCm: 0, yCm: 0 }, rotation: 0, appearance: 'oak', idempotencyKey: 'k' }, schema.inputSchema) || '', /must be one of|does not match/);
 });

@@ -85,6 +85,8 @@ when they are not. `execute` honours the caller's `AbortSignal`.
 
 `createCustomFurniture` adds one-off measured floor furniture to Proposal only. Its closed kind enum activates the same engine rules, exact dimensions and provenance cannot be rewritten into a catalogue variant, and any newly introduced blocking issue refuses the creation atomically. The schema accepts no arbitrary tags, code, markup, URLs, role claims or wall/ceiling mounts. Custom objects show a visible CUSTOM identity and safe 2D/3D primitives inside their measured envelope; they remain local to the room document and still require human Apply.
 
+Custom sofas additionally support a strict declarative sectional union: 2–12 connected edge-sharing `seat`, `corner` or `chaise` rectangles with exact local centimetre coordinates, dimensions, height and facing. L/U empty corners remain genuinely empty for collision, custom-floor, fixture and route rules. Internal joins are removed from exposed seating-front checks, while one explicit `primaryFacing` controls TV/coffee-table semantics. The whole assembly remains one immutable, revision-bound custom object; imports fail closed on altered topology or extra data. This is intentionally not a generic polygon, code, SVG or remote-model mechanism.
+
 Under them sits one pure rule engine on a 20 cm grid: conservative
 rasterisation, height classes (a coffee table passes the TV strip but still
 blocks the floor), door sweep versus open leaf and adjacent wall attachments,

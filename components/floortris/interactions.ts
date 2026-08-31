@@ -1,5 +1,5 @@
 import { CATALOGUE, fromVariant } from './data.ts';
-import { bounds, validate } from './engine.ts';
+import { bounds, validate } from './sectional-engine.ts';
 import { clone, type AppState, type Furniture, type GridCell, type Issue, type Layout, type Room, type Rules } from './model.ts';
 import { nearestWallAnchor } from './floorplan.ts';
 export type OverlayMode = 'furniture' | 'height' | 'walk' | 'tv' | 'doors';

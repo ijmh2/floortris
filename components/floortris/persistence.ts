@@ -1,4 +1,4 @@
-import { validate } from './engine.ts';
+import { validate } from './sectional-engine.ts';
 import type { AppState } from './model.ts';
 import { validateRoomInputs } from './room-inputs.ts';
 import { invalidCustomFurnitureRecord } from './custom-furniture.ts';

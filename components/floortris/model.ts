@@ -13,6 +13,12 @@ export type LightingZone = 'ambient' | 'seating' | 'reading' | 'circulation';
  * remain catalogue or human room-input concerns. */
 export type CustomFurnitureKind = 'sofa' | 'chair' | 'table' | 'coffee_table' | 'desk' | 'storage' | 'bed' | 'plant';
 export type CustomFurnitureProvenance = { source: 'agent_authored_one_off'; tool: 'createCustomFurniture' };
+export type SectionalModuleType = 'seat' | 'corner' | 'chaise';
+export type SectionalModule = { id: string; type: SectionalModuleType; xCm: number; yCm: number; widthCm: number; depthCm: number; heightCm: number; facing: Wall };
+/** Local module coordinates are normalized to the unrotated measured envelope.
+ * Parent rotation moves the complete union; primaryFacing alone controls the
+ * TV and coffee-table relationship. */
+export type SectionalGeometry = { type: 'sectional'; primaryFacing: Wall; modules: SectionalModule[] };
 export type RoomProfile =
   | { kind: 'lounge' }
   | { kind: 'bedroom'; sleeping: 'single' | 'double' | 'king'; workspace: boolean; storage: boolean; bedsideQuantity?: number }
@@ -40,6 +46,8 @@ export type Furniture = {
   /** Closed provenance marker. Custom records never accept agent tags, rule
    * overrides, code, markup or remote assets. */
   customProvenance?: CustomFurnitureProvenance;
+  /** Closed declarative geometry. V1 only supports connected custom sofas. */
+  geometry?: SectionalGeometry;
   tags: string[]; sleepSize?: 'single' | 'double' | 'king'; conceptualOnly?: boolean; clearance?: { label: string; rect: Rect };
 };
 export type Door = { id: string; kind: 'door'; wall: Wall; segmentId?: string; offsetCm: number; widthCm: number; hinge: 'start' | 'end'; swing: 'in' | 'out'; angle: 90; mechanism: 'hinged' | 'pocket' | 'bifold' | 'sliding'; entrance: boolean };

@@ -1,5 +1,5 @@
 import { CATALOGUE, DEFAULT_RULES, PALETTES, fromVariant, makeDemo } from './data.ts';
-import { COFFEE_TABLE_GAP_MIN_CM, bedAccessBands, bounds, frontBand, furnitureBackWall, rectCells, validate, wallGaps, wantsWallBacking } from './engine.ts';
+import { COFFEE_TABLE_GAP_MIN_CM, bedAccessBands, bounds, frontBand, furnitureBackWall, rectCells, validate, wallGaps, wantsWallBacking } from './sectional-engine.ts';
 import { clone, faces, opposite, rotations, type AppState, type ToolLogEntry, type Candidate, type CommandResult, type Furniture, type Layout, type Proposal, type Report, type Room, type Rules, type Wall } from './model.ts';
 import { TOOL_SCHEMAS, validateSchema } from './schemas.ts';
 import { roomEditStamp, validateRoomInputs } from './room-inputs.ts';
@@ -8,6 +8,7 @@ import { documentId } from './persistence.ts';
 import { anchorForDirection, rectInsideRoom, resolveWallSegment, wallRect, wallSegments } from './floorplan.ts';
 import { canSupportLamp, isFloorOccupant, LIGHT_KINDS, normalizeFixturePlacement } from './fixture-placement.ts';
 import { makeCustomFurniture } from './custom-furniture.ts';
+import { sectionalGeometryError } from './sectional.ts';
 
 // All commands are checked against strict recursive schemas before this dispatcher reads dynamic keys.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema-validated JSON dispatch boundary; authoritative domain records remain strongly typed.
@@ -350,8 +351,9 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         } else if (name === 'createCustomFurniture') {
           if (!a.label.trim() || /[\u0000-\u001f\u007f]/.test(a.label)) fail('invalid_arguments', 'Use a visible human-readable label without control characters.');
           if (a.linkedDeskId !== undefined && a.kind !== 'chair') fail('invalid_property', 'Only a custom chair may use linkedDeskId. Other relationship, role and mount claims are not accepted.');
+          if (a.geometry) { const geometryError = sectionalGeometryError(a.geometry, { w: a.widthCm, d: a.depthCm, h: a.heightCm }); if (a.kind !== 'sofa' || geometryError) fail('invalid_sectional_geometry', geometryError || 'Only a custom sofa may use sectional geometry.'); }
           if (p.layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 movable pieces.');
-          const object = makeCustomFurniture({ label: a.label, kind: a.kind, widthCm: a.widthCm, depthCm: a.depthCm, heightCm: a.heightCm, positionCm: a.positionCm, rotation: a.rotation, appearance: a.appearance, ...(a.linkedDeskId ? { linkedDeskId: a.linkedDeskId } : {}) }, `custom-${p.id}-${p.revision + 1}`, p.rules.cellCm);
+          const object = makeCustomFurniture({ label: a.label, kind: a.kind, widthCm: a.widthCm, depthCm: a.depthCm, heightCm: a.heightCm, positionCm: a.positionCm, rotation: a.rotation, appearance: a.appearance, ...(a.linkedDeskId ? { linkedDeskId: a.linkedDeskId } : {}), ...(a.geometry ? { geometry: a.geometry } : {}) }, `custom-${p.id}-${p.revision + 1}`, p.rules.cellCm);
           if (a.linkedDeskId) checkPatch(object, { linkedDeskId: a.linkedDeskId }, p.layout, p.room, p.rules);
           const before = validate(p.layout, p.room, p.rules, state.inventory, false);
           const baseline = new Set(before.issues.filter(issue => issue.severity === 'block').map(issueSignature));

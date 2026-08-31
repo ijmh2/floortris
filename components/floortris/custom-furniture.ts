@@ -1,4 +1,5 @@
-import type { CustomFurnitureKind, Furniture, Rotation } from './model.ts';
+import { sectionalGeometryError } from './sectional.ts';
+import type { CustomFurnitureKind, Furniture, Rotation, SectionalGeometry } from './model.ts';
 
 export const CUSTOM_FURNITURE_KINDS: readonly CustomFurnitureKind[] = [
   'sofa', 'chair', 'table', 'coffee_table', 'desk', 'storage', 'bed', 'plant',
@@ -15,6 +16,7 @@ export type CustomFurnitureInput = {
   rotation: Rotation;
   appearance: typeof CUSTOM_FURNITURE_PALETTES[number];
   linkedDeskId?: string;
+  geometry?: SectionalGeometry;
 };
 
 export function makeCustomFurniture(input: CustomFurnitureInput, id: string, cellCm = 20): Furniture {
@@ -33,6 +35,7 @@ export function makeCustomFurniture(input: CustomFurnitureInput, id: string, cel
     requiredInRoom: false,
     tags: [],
     ...(input.linkedDeskId ? { linkedDeskId: input.linkedDeskId } : {}),
+    ...(input.geometry ? { geometry: structuredClone(input.geometry) } : {}),
   };
 }
 
@@ -40,7 +43,7 @@ export function makeCustomFurniture(input: CustomFurnitureInput, id: string, cel
  * native tool creates so imported tags or role claims cannot satisfy a brief. */
 export function invalidCustomFurnitureRecord(item: Furniture): string | null {
   if (item.ownership !== 'custom') return null;
-  const allowed = new Set(['id', 'label', 'kind', 'ownership', 'customProvenance', 'sizeCm', 'originCell', 'rotation', 'elevationCm', 'locked', 'appearance', 'requiredInRoom', 'tags', 'linkedDeskId']);
+  const allowed = new Set(['id', 'label', 'kind', 'ownership', 'customProvenance', 'sizeCm', 'originCell', 'rotation', 'elevationCm', 'locked', 'appearance', 'requiredInRoom', 'tags', 'linkedDeskId', 'geometry']);
   if (Object.keys(item).some(key => !allowed.has(key))) return 'Custom furniture contains unsupported data.';
   if (!item.customProvenance || item.customProvenance.source !== 'agent_authored_one_off' || item.customProvenance.tool !== 'createCustomFurniture') return 'Custom furniture provenance is missing or unsupported.';
   if (Object.keys(item.customProvenance).some(key => !['source', 'tool'].includes(key))) return 'Custom furniture provenance contains unsupported data.';
@@ -53,5 +56,9 @@ export function invalidCustomFurnitureRecord(item: Furniture): string | null {
   if (item.elevationCm !== 0 || item.variantId || item.backEdge || item.wallAnchor || item.fixtureType || item.lightingZone || item.attachedOpeningId || item.supportObjectId || item.targetSofaId || item.sleepSize || item.conceptualOnly || item.clearance) return 'Custom furniture contains an unsupported role, mount or variant claim.';
   if (item.tags.length !== 0 || item.requiredInRoom || item.locked.size !== true) return 'Custom furniture authority fields are invalid.';
   if (item.linkedDeskId !== undefined && (item.kind !== 'chair' || typeof item.linkedDeskId !== 'string' || !item.linkedDeskId)) return 'Only a custom chair may name a linked desk.';
+  if (item.geometry) {
+    if (item.kind !== 'sofa') return 'Only a custom sofa may use sectional geometry.';
+    const error = sectionalGeometryError(item.geometry, item.sizeCm); if (error) return error;
+  }
   return null;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { bounds, validate, wallBand } from './engine.ts';
+import { bounds, validate, wallBand } from './sectional-engine.ts';
 import { wallSnap } from './interactions.ts';
 import { clone, type AppState, type CommandResult, type Furniture, type Opening, type Room, type Rules, type Wall } from './model.ts';
 import { horizontalWall, radiatorMeasures, radiatorOnWall, roomEditStamp, validateRoomInputs, wallLength, walls } from './room-inputs.ts';

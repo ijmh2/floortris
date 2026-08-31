@@ -1,4 +1,4 @@
-import { bounds, frontBand } from './engine.ts';
+import { bounds, frontBand } from './sectional-engine.ts';
 import { faces, type Furniture, type Room, type Wall, type Rotation } from './model.ts';
 import { wallRect } from './floorplan.ts';
 

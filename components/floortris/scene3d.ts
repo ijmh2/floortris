@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { bounds } from './engine.ts';
+import { bounds } from './sectional-engine.ts';
 import { formFor, PALETTES } from './data.ts';
 import { finishMaterial, mapFinishUV, type TextureOptions } from './finish-material.ts';
 import type { Furniture, Layout, Room, Rules, Wall } from './model.ts';
 import { floorPoints, wallPointCm, wallSegments } from './floorplan.ts';
 import { isWallMounted } from './fixture-placement.ts';
+import { moduleEdgeJoined } from './sectional.ts';
+import { opposite, type SectionalModule } from './model.ts';
 
 // Metres in the renderer, centimetres in the document. +X east, +Z south, +Y up.
 export function furniturePose(item: Furniture, room: Room, cellCm = 20) {
@@ -43,7 +45,7 @@ function cylinder(parent: THREE.Object3D, radiusTop: number, radiusBottom: numbe
 export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.Group {
   const g = new THREE.Group(), pose = furniturePose(item, room, cellCm);
   g.name = item.id; g.userData.objectId = item.id; g.userData.heightUnknown = item.sizeCm.h === null;
-  if (item.ownership === 'custom') { g.userData.custom = true; g.userData.provenance = item.customProvenance?.source; g.userData.measuredEnvelopeCm = { ...item.sizeCm }; }
+  if (item.ownership === 'custom') { g.userData.custom = true; g.userData.provenance = item.customProvenance?.source; g.userData.measuredEnvelopeCm = { ...item.sizeCm }; if (item.geometry) { g.userData.sectional = true; g.userData.accessibleLabel = `CUSTOM SECTIONAL ${item.label}, ${item.geometry.modules.length} measured modules`; g.userData.modules = structuredClone(item.geometry.modules); } }
   g.position.set(pose.x, pose.y, pose.z); g.rotation.y = pose.angle;
   const w = item.sizeCm.w / 100, d = item.sizeCm.d / 100, h = (item.sizeCm.h ?? 100) / 100;
   const body = material(colorFor(item.appearance)), wood = material('#ad8c63'), dark = material('#3e4844'), cream = material('#ece3d3');
@@ -57,6 +59,22 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     box(g, [w, h, d], [0, h / 2, 0], body);
     const source = new THREE.BoxGeometry(w, h, d);
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(source), new THREE.LineBasicMaterial({color:'#a96831'})); source.dispose(); edges.position.y = h / 2; g.add(edges);
+  } else if (item.geometry?.type === 'sectional') {
+    const edgeBox = (module: SectionalModule, edge: Wall, height: number, thickness: number, mat: THREE.Material) => {
+      const mw=module.widthCm/100, md=module.depthCm/100, mx=-w/2+(module.xCm+module.widthCm/2)/100, mz=-d/2+(module.yCm+module.depthCm/2)/100;
+      if(edge==='north'||edge==='south') box(g,[mw,height,Math.min(md,thickness)],[mx,height/2,mz+(edge==='north'?-1:1)*(md/2-Math.min(md,thickness)/2)],mat,.025);
+      else box(g,[Math.min(mw,thickness),height,md],[mx+(edge==='west'?-1:1)*(mw/2-Math.min(mw,thickness)/2),height/2,mz],mat,.025);
+    };
+    const order:Wall[]=['north','east','south','west'];
+    for(const section of item.geometry.modules){
+      const mw=section.widthCm/100,md=section.depthCm/100,mh=section.heightCm/100,mx=-w/2+(section.xCm+section.widthCm/2)/100,mz=-d/2+(section.yCm+section.depthCm/2)/100,base=Math.min(mh*.32,.28);
+      box(g,[mw,base,md],[mx,base/2,mz],body,.035);
+      box(g,[mw*.88,Math.min(mh*.18,.15),md*.72],[mx,base+Math.min(mh*.09,.075),mz],cream,.035);
+      const back=opposite[section.facing],sideA=order[(order.indexOf(section.facing)+1)%4],sideB=order[(order.indexOf(section.facing)+3)%4];
+      if(!moduleEdgeJoined(item.geometry,section,back)) edgeBox(section,back,mh,Math.min(mw,md)*.16,body);
+      if(!moduleEdgeJoined(item.geometry,section,sideA)) edgeBox(section,sideA,mh*.62,Math.min(mw,md)*.11,body);
+      if(!moduleEdgeJoined(item.geometry,section,sideB)) edgeBox(section,sideB,mh*.62,Math.min(mw,md)*.11,body);
+    }
   } else if (item.kind === 'window_treatment') {
     if (item.fixtureType === 'blind') {
       box(g, [w, h, Math.max(.006,d)], [0, h / 2, 0], cream, .006);
