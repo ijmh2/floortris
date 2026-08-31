@@ -6,7 +6,7 @@ import { createStore } from './store.ts';
 import { DEFAULT_RULES } from './data.ts';
 import { makeCustomFurniture } from './custom-furniture.ts';
 import { validate } from './sectional-engine.ts';
-import { sectionalGeometryError, sectionalEnvelope, transformedModuleRect } from './sectional.ts';
+import { sectionalGeometryError, sectionalEnvelope, sectionalVisualPlan, transformedModuleRect } from './sectional.ts';
 import { readSavedRoom } from './persistence.ts';
 import { TOOL_SCHEMAS, validateSchema } from './schemas.ts';
 import { buildFurniture } from './scene3d.ts';
@@ -20,6 +20,11 @@ const U: SectionalGeometry = { type: 'sectional', primaryFacing: 'south', module
 const L: SectionalGeometry = { type: 'sectional', primaryFacing: 'south', modules: [
   { id: 'run', type: 'seat', xCm: 0, yCm: 0, widthCm: 240, depthCm: 80, heightCm: 85, facing: 'south' },
   { id: 'return', type: 'chaise', xCm: 0, yCm: 80, widthCm: 80, depthCm: 160, heightCm: 85, facing: 'east' },
+] };
+const OFF_GRID_U: SectionalGeometry = { type: 'sectional', primaryFacing: 'south', modules: [
+  { id: 'left-return', type: 'chaise', xCm: 0, yCm: 0, widthCm: 90, depthCm: 270, heightCm: 85, facing: 'east' },
+  { id: 'centre', type: 'seat', xCm: 90, yCm: 0, widthCm: 260, depthCm: 90, heightCm: 85, facing: 'south' },
+  { id: 'right-return', type: 'chaise', xCm: 350, yCm: 0, widthCm: 90, depthCm: 270, heightCm: 85, facing: 'west' },
 ] };
 
 function state(floorPlan?: FloorPlan): AppState {
@@ -107,6 +112,15 @@ test('internal joins do not self-collide or self-block, while exposed fronts rem
   assert.ok(blocked.issues.some(issue => issue.code === 'sofa_front_blocked' && issue.objectIds.includes('blocker')));
 });
 
+test('off-grid module joins do not become false frontage blockers', () => {
+  const app = state(), sectional = custom(OFF_GRID_U, 'off-grid-u', 130, 40);
+  const clear = validate({ ...app.current, furniture: [sectional] }, app.room, app.rules, []);
+  assert.equal(clear.issues.some(issue => issue.code === 'sofa_front_blocked'), false, JSON.stringify(clear.issues));
+  const blocker = makeCustomFurniture({ label: 'Real front blocker', kind: 'storage', widthCm: 40, depthCm: 40, heightCm: 60, positionCm: { xCm: 300, yCm: 150 }, rotation: 0, appearance: 'oak' }, 'real-blocker');
+  const blocked = validate({ ...app.current, furniture: [sectional, blocker] }, app.room, app.rules, []);
+  assert.ok(blocked.issues.some(issue => issue.code === 'sofa_front_blocked' && issue.objectIds.includes('real-blocker')));
+});
+
 test('moving and quarter-turning the parent transforms the complete union', () => {
   const item = custom(L, 'moving', 100, 120, 90);
   const rects = item.geometry!.modules.map(module => transformedModuleRect(item, module));
@@ -123,11 +137,30 @@ test('sectionals persist locally and forged module data fails closed', () => {
   assert.equal(readSavedRoom(JSON.stringify(forged)), null);
 });
 
-test('3D sectional primitives stay inside the exact envelope and disclose modules', () => {
+test('sectional visual plan creates continuous U/L backs and terminal arms only', () => {
+  const u = sectionalVisualPlan(U), l = sectionalVisualPlan(L);
+  assert.equal(u.joins.length, 2); assert.equal(l.joins.length, 1);
+  assert.deepEqual(u.edges.filter(edge => edge.role === 'arm').map(edge => `${edge.moduleId}:${edge.edge}`).sort(), ['left-return:south', 'right-return:south']);
+  assert.deepEqual(l.edges.filter(edge => edge.role === 'arm').map(edge => `${edge.moduleId}:${edge.edge}`).sort(), ['return:south', 'run:east']);
+  assert.deepEqual(u.edges.filter(edge => edge.role === 'connector-back').map(edge => `${edge.moduleId}:${edge.edge}`).sort(), ['left-return:north', 'right-return:north']);
+  assert.equal(u.edges.some(edge => edge.moduleId === 'centre' && (edge.edge === 'east' || edge.edge === 'west')), false, 'joined centre ends must have no rail primitive');
+});
+
+test('3D sectional is one joined upholstery system inside the exact envelope', () => {
   const item = custom(), group = buildFurniture(item, state().room); group.updateMatrixWorld(true);
   const size = new THREE.Box3().setFromObject(group).getSize(new THREE.Vector3());
   assert.ok(size.x <= 4.000001 && size.z <= 2.400001 && size.y <= .850001, `${size.x},${size.y},${size.z}`);
   assert.equal(group.userData.sectional, true); assert.equal(group.userData.modules.length, 3); assert.match(group.userData.accessibleLabel, /CUSTOM SECTIONAL/);
+  assert.deepEqual(group.userData.sectionalVisual, { connected: true, bases: 3, junctions: 2, arms: 2, backs: 5 });
+  const primitives: string[] = []; group.traverse(object => { if (object.userData.sectionalPrimitive) primitives.push(object.userData.sectionalPrimitive); });
+  assert.equal(primitives.filter(kind => kind === 'base').length, 3); assert.equal(primitives.filter(kind => kind === 'junction').length, 2);
+  assert.equal(primitives.filter(kind => kind === 'arm').length, 2); assert.equal(primitives.filter(kind => kind === 'connector-back').length, 2);
+  for (const rotation of [0, 90, 180, 270] as const) {
+    const rotated = buildFurniture(custom(U, `u-${rotation}`, 200, 40, rotation), state().room); rotated.updateMatrixWorld(true);
+    const turned = rotation === 90 || rotation === 270, rotatedSize = new THREE.Box3().setFromObject(rotated).getSize(new THREE.Vector3());
+    assert.ok(Math.abs(rotatedSize.x - (turned ? 2.4 : 4)) < 1e-6 && Math.abs(rotatedSize.z - (turned ? 4 : 2.4)) < 1e-6, `${rotation}: ${rotatedSize.x},${rotatedSize.z}`);
+    assert.deepEqual(rotated.userData.sectionalVisual, group.userData.sectionalVisual);
+  }
 });
 
 test('native schema preserves rectangle compatibility and strictly discriminates sectionals', () => {
@@ -142,5 +175,5 @@ test('2D board exposes a dedicated continuous CUSTOM SECTIONAL renderer and modu
   const source = readFileSync(new URL('./FloortrisApp.tsx', import.meta.url), 'utf8');
   const css = readFileSync(new URL('./floortris.css', import.meta.url), 'utf8');
   assert.match(source, /function SectionalShape/); assert.match(source, /CUSTOM SECTIONAL/); assert.match(source, /module\.widthCm/);
-  assert.match(css, /\.ft-sectional-module/); assert.match(css, /\.ft-sectional-back/); assert.match(css, /\.ft-sectional-arm/);
+  assert.match(css, /\.ft-sectional-module/); assert.match(css, /\.ft-sectional-junction/); assert.match(css, /\.ft-sectional-connector-back/); assert.match(css, /\.ft-sectional-arm/);
 });

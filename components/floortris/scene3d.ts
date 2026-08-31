@@ -6,8 +6,7 @@ import { finishMaterial, mapFinishUV, type TextureOptions } from './finish-mater
 import type { Furniture, Layout, Room, Rules, Wall } from './model.ts';
 import { floorPoints, wallPointCm, wallSegments } from './floorplan.ts';
 import { isWallMounted } from './fixture-placement.ts';
-import { moduleEdgeJoined } from './sectional.ts';
-import { opposite, type SectionalModule } from './model.ts';
+import { edgeSegmentRect, joinPatchRect, moduleRect, sectionalVisualPlan } from './sectional.ts';
 
 // Metres in the renderer, centimetres in the document. +X east, +Z south, +Y up.
 export function furniturePose(item: Furniture, room: Room, cellCm = 20) {
@@ -60,21 +59,35 @@ export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.
     const source = new THREE.BoxGeometry(w, h, d);
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(source), new THREE.LineBasicMaterial({color:'#a96831'})); source.dispose(); edges.position.y = h / 2; g.add(edges);
   } else if (item.geometry?.type === 'sectional') {
-    const edgeBox = (module: SectionalModule, edge: Wall, height: number, thickness: number, mat: THREE.Material) => {
-      const mw=module.widthCm/100, md=module.depthCm/100, mx=-w/2+(module.xCm+module.widthCm/2)/100, mz=-d/2+(module.yCm+module.depthCm/2)/100;
-      if(edge==='north'||edge==='south') box(g,[mw,height,Math.min(md,thickness)],[mx,height/2,mz+(edge==='north'?-1:1)*(md/2-Math.min(md,thickness)/2)],mat,.025);
-      else box(g,[Math.min(mw,thickness),height,md],[mx+(edge==='west'?-1:1)*(mw/2-Math.min(mw,thickness)/2),height/2,mz],mat,.025);
+    const geometry = item.geometry, plan = sectionalVisualPlan(geometry), modules = new Map(geometry.modules.map(module => [module.id, module]));
+    const placeRect = (rectCm: { x: number; y: number; w: number; d: number }, height: number, y: number, mat: THREE.Material, radius: number, primitive: string, moduleIds: string[]) => {
+      const mesh = box(g, [rectCm.w / 100, height, rectCm.d / 100], [-w / 2 + (rectCm.x + rectCm.w / 2) / 100, y, -d / 2 + (rectCm.y + rectCm.d / 2) / 100], mat, radius);
+      mesh.name = `sectional-${primitive}-${moduleIds.join('-')}`; mesh.userData.sectionalPrimitive = primitive; mesh.userData.moduleIds = moduleIds; return mesh;
     };
-    const order:Wall[]=['north','east','south','west'];
-    for(const section of item.geometry.modules){
-      const mw=section.widthCm/100,md=section.depthCm/100,mh=section.heightCm/100,mx=-w/2+(section.xCm+section.widthCm/2)/100,mz=-d/2+(section.yCm+section.depthCm/2)/100,base=Math.min(mh*.32,.28);
-      box(g,[mw,base,md],[mx,base/2,mz],body,.035);
-      box(g,[mw*.88,Math.min(mh*.18,.15),md*.72],[mx,base+Math.min(mh*.09,.075),mz],cream,.035);
-      const back=opposite[section.facing],sideA=order[(order.indexOf(section.facing)+1)%4],sideB=order[(order.indexOf(section.facing)+3)%4];
-      if(!moduleEdgeJoined(item.geometry,section,back)) edgeBox(section,back,mh,Math.min(mw,md)*.16,body);
-      if(!moduleEdgeJoined(item.geometry,section,sideA)) edgeBox(section,sideA,mh*.62,Math.min(mw,md)*.11,body);
-      if(!moduleEdgeJoined(item.geometry,section,sideB)) edgeBox(section,sideB,mh*.62,Math.min(mw,md)*.11,body);
+    // Bases are square at shared edges. Rounded per-module bases were the source
+    // of the visible cracks that made a U read as three independent sofas.
+    for (const section of geometry.modules) {
+      const mh = section.heightCm / 100, base = Math.min(mh * .32, .28), cushionHeight = Math.min(mh * .18, .15), rect = moduleRect(section);
+      placeRect(rect, base, base / 2, body, 0, 'base', [section.id]);
+      const inset = Math.min(5, section.widthCm / 8, section.depthCm / 8), cushion = { x: rect.x + inset, y: rect.y + inset, w: rect.w - inset * 2, d: rect.d - inset * 2 };
+      placeRect(cushion, cushionHeight, base + cushionHeight / 2, cream, .025, 'seat', [section.id]);
     }
+    // A raised upholstered patch crosses every exact module join. Besides
+    // covering sub-pixel seams, this is the actual corner/junction seat rather
+    // than another arm-ended straight-sofa primitive.
+    for (const join of plan.joins) {
+      const a = modules.get(join.aId)!, b = modules.get(join.bId)!, joinHeight = Math.min(a.heightCm, b.heightCm) / 100;
+      const base = Math.min(joinHeight * .32, .28), cushionHeight = Math.min(joinHeight * .18, .15), patch = joinPatchRect(join, Math.min(12, join.end - join.start));
+      placeRect(patch, cushionHeight, base + cushionHeight / 2 + .002, cream, .018, 'junction', [join.aId, join.bId]);
+    }
+    for (const segment of plan.edges) {
+      if (segment.role === 'front') continue;
+      const section = modules.get(segment.moduleId)!, mh = section.heightCm / 100;
+      const thickness = segment.role === 'arm' ? Math.min(11, section.widthCm, section.depthCm) : Math.min(16, section.widthCm, section.depthCm);
+      const rect = edgeSegmentRect(section, segment, thickness), railHeight = segment.role === 'arm' ? mh * .62 : mh;
+      placeRect(rect, railHeight, railHeight / 2, body, .022, segment.role, [section.id]);
+    }
+    g.userData.sectionalVisual = { connected: true, bases: geometry.modules.length, junctions: plan.joins.length, arms: plan.edges.filter(edge => edge.role === 'arm').length, backs: plan.edges.filter(edge => edge.role === 'back' || edge.role === 'connector-back').length };
   } else if (item.kind === 'window_treatment') {
     if (item.fixtureType === 'blind') {
       box(g, [w, h, Math.max(.006,d)], [0, h / 2, 0], cream, .006);

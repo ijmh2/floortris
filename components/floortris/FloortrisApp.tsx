@@ -4,7 +4,7 @@ import { FORM_PARTS, FORM_LABEL } from './forms.ts';
 import { roomSession } from './samples.ts';
 import { documentId, loadWorkspaceRoom, readImportedRoom, readWorkspace, saveWorkspaceRoom } from './persistence.ts';
 import { bounds, validate, wallBand } from './sectional-engine.ts';
-import { faces, opposite, type AppState, type Candidate, type CommandResult, type Furniture, type Issue, type Layout, type Report, type Room, type Rules, type Rotation, type Cell, type Wall } from './model.ts';
+import { faces, type AppState, type Candidate, type CommandResult, type Furniture, type Issue, type Layout, type Report, type Room, type Rules, type Rotation, type Cell } from './model.ts';
 import { createStore, proposalStatus, type FloortrisStore } from './store.ts';
 import { registerFloortrisTools, type WebMCPState } from './webmcp.ts';
 import './floortris.css';
@@ -16,7 +16,7 @@ import RoomPicker from './RoomPicker.tsx';
 import { ROOM_PRESETS, dockVariants, VariantPreview } from './RoomLibrary.tsx';
 import { floorAreaM2, floorPoints, planClipPath, wallRect, wallSegments } from './floorplan.ts';
 import { canSupportLamp, isWallMounted } from './fixture-placement.ts';
-import { moduleEdgeJoined, transformedModuleFacing, transformedModuleRect } from './sectional.ts';
+import { edgeSegmentRect, joinPatchRect, sectionalVisualPlan, transformedLocalRect } from './sectional.ts';
 const Room3D = lazy(() => import('./Room3D.tsx'));
 class ThreeViewBoundary extends React.Component<{ children: React.ReactNode; onReturn: () => void }, { failed: boolean }> {
   state = { failed: false };
@@ -107,17 +107,20 @@ function Shape({ item, small = false }: { item: Furniture | { kind: string; appe
   </div>;
 }
 function SectionalShape({ item }: { item: Furniture }) {
-  const geometry = item.geometry!, envelope = bounds({ ...item, originCell: { x: 0, y: 0 } }), order: Wall[] = ['north', 'east', 'south', 'west'];
-  return <div className="ft-sectional" aria-hidden="true">{geometry.modules.map(module => {
-    const rect = transformedModuleRect({ ...item, originCell: { x: 0, y: 0 } }, module), face = transformedModuleFacing(item, module), back = opposite[face];
-    const sideA = order[(order.indexOf(module.facing) + 1) % 4], sideB = order[(order.indexOf(module.facing) + 3) % 4];
-    return <div key={module.id} className={`ft-sectional-module ft-face-${face} ft-module-${module.type}`} style={{ left: `${rect.x / envelope.w * 100}%`, top: `${rect.y / envelope.d * 100}%`, width: `${rect.w / envelope.w * 100}%`, height: `${rect.d / envelope.d * 100}%`, '--piece-color': palette(item.appearance) } as React.CSSProperties}>
-      <i className="ft-sectional-cushion"/>
-      {!moduleEdgeJoined(geometry, module, opposite[module.facing]) && <i className={`ft-sectional-back ft-edge-${back}`}/>}
-      {!moduleEdgeJoined(geometry, module, sideA) && <i className={`ft-sectional-arm ft-edge-${transformedModuleFacing(item, { ...module, facing: sideA })}`}/>}
-      {!moduleEdgeJoined(geometry, module, sideB) && <i className={`ft-sectional-arm ft-edge-${transformedModuleFacing(item, { ...module, facing: sideB })}`}/>}
-    </div>;
-  })}<span className="ft-sectional-badge">CUSTOM SECTIONAL</span></div>;
+  const geometry = item.geometry!, localItem = { ...item, originCell: { x: 0, y: 0 } }, envelope = bounds(localItem), plan = sectionalVisualPlan(geometry), modules = new Map(geometry.modules.map(section => [section.id, section]));
+  const styleFor = (rect: { x: number; y: number; w: number; d: number }) => {
+    const shown = transformedLocalRect(localItem, rect);
+    return { left: `${shown.x / envelope.w * 100}%`, top: `${shown.y / envelope.d * 100}%`, width: `${shown.w / envelope.w * 100}%`, height: `${shown.d / envelope.d * 100}%`, '--piece-color': palette(item.appearance) } as React.CSSProperties;
+  };
+  return <div className="ft-sectional" aria-hidden="true">
+    {geometry.modules.map(section => <div key={section.id} className={`ft-sectional-module ft-module-${section.type}`} style={styleFor({ x: section.xCm, y: section.yCm, w: section.widthCm, d: section.depthCm })}><i className="ft-sectional-cushion"/></div>)}
+    {plan.joins.map((join, index) => <i key={`join-${index}`} className="ft-sectional-junction" style={styleFor(joinPatchRect(join, Math.min(12, join.end - join.start)))}/>)}
+    {plan.edges.filter(edge => edge.role !== 'front').map((edge, index) => {
+      const section = modules.get(edge.moduleId)!, thickness = edge.role === 'arm' ? Math.min(11, section.widthCm, section.depthCm) : Math.min(16, section.widthCm, section.depthCm);
+      return <i key={`edge-${index}`} className={`ft-sectional-rail ft-sectional-${edge.role}`} style={styleFor(edgeSegmentRect(section, edge, thickness))}/>;
+    })}
+    <span className="ft-sectional-badge">CUSTOM SECTIONAL</span>
+  </div>;
 }
 function Board({ layout, room, rules, inventory, report, title, revision, compact, selected, onSelect, onEdit, onPin, onNotice, mode, editable, stamp, suggestions, onAccept, draggedVariant, onDropVariant, focusCells, onEditRoom }: {
   layout:Layout;room:Room;rules:Rules;inventory:Furniture[];report:Report;title:string;revision:number;compact?:boolean;selected:string|null;

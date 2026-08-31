@@ -102,7 +102,13 @@ function frontageProbe(layout: Layout, item: Furniture, module: SectionalModule,
   const relevant = probe.issues.filter(issue => issue.objectIds.includes(item.id) && (issue.code === 'sofa_front_blocked' || (issue.code === 'path_broken' && issue.destinationId === `sofa:${item.id}`) || issue.code === 'walk_tight'));
   const suffix = `${module.id}:${span.start}-${span.end}`;
   replacement.filter(piece => piece.id.includes(INTERNAL) && piece.id.startsWith(item.id)).forEach(piece => mapping.set(piece.id, item.id));
-  return { zones: zone ? [{ ...zone, id: `sofa:${item.id}:${suffix}`, label: `${item.label} ${module.id} exposed front` }] : [], issues: relevant.map(issue => ({ ...issue, objectIds: remapIds(issue.objectIds, mapping), ...(issue.destinationId ? { destinationId: `sofa:${item.id}:${suffix}` } : {}) })) };
+  const issues = relevant.map(issue => ({ ...issue, objectIds: remapIds(issue.objectIds, mapping), ...(issue.destinationId ? { destinationId: `sofa:${item.id}:${suffix}` } : {}) }))
+    // Exact module rectangles can meet inside a 20 cm raster cell when their
+    // measurements are off-grid. That is not parked furniture. Keep a frontage
+    // issue only when an object outside this immutable parent actually occupies
+    // the band; real external blockers remain reported and remapped normally.
+    .filter(issue => issue.code !== 'sofa_front_blocked' || issue.objectIds.some(id => id !== item.id));
+  return { zones: zone ? [{ ...zone, id: `sofa:${item.id}:${suffix}`, label: `${item.label} ${module.id} exposed front` }] : [], issues };
 }
 
 export function validate(layout: Layout, room: Room, rules: Rules, inventory: Furniture[] = [], includeFixes = true): Report {
