@@ -1,6 +1,7 @@
 import { normalizeFixturePlacement } from './fixture-placement.ts';
 import { fromVariant, makeDemo } from './data.ts';
 import { clone, type AppState, type FixedFixture, type RoomProfile } from './model.ts';
+import { BENCHMARKS } from './benchmarks.ts';
 
 export const profileRules = (profile: RoomProfile) => profile.kind === 'lounge'
   ? ['sofa', 'tv'] as const
@@ -130,6 +131,7 @@ export function roomSession(search: string) {
     bathroom: { storageKey: 'floortris.v2.sample.bathroom', makeInitial: makeBathroomConcept },
     sketch: { storageKey: 'floortris.v4.sample.sketch', makeInitial: makeSketchRoom },
     local: { storageKey: 'floortris.v1.local', makeInitial: makeDemo },
+    ...Object.fromEntries(BENCHMARKS.map(benchmark => [benchmark.id, { storageKey: `floortris.v1.${benchmark.id}`, makeInitial: benchmark.makeInitial }])),
   };
   return { compact: sample === '3m', sample, ...(sessions[sample] || sessions.local) };
 }

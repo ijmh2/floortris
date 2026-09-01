@@ -195,6 +195,8 @@
 .ft-history button{width:34px;height:34px;padding:0;border:1px solid var(--line);border-radius:9px;background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;color:#43563f}
 .ft-history button:hover:not(:disabled){background:#eef2e6;border-color:#cfd8c4}
 .ft-history button:disabled{opacity:.35}
+.ft-strategy-card{border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0;background:#f5f8ef}.ft-strategy-card header{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.ft-strategy-card header h3{margin:0 0 4px}.ft-strategy-card header p{margin:0}.ft-strategy-card header>strong{font-size:15px;color:var(--green);white-space:nowrap}.ft-strategy-card ul{margin:12px 0;padding-left:20px}.ft-strategy-card small{display:block;color:var(--muted);margin-bottom:10px}
+.ft-benchmark-banner{display:flex;gap:10px;align-items:flex-start;padding:10px 20px;background:#f2eee1;border-bottom:1px solid #e4dcc6;color:#5f563f;font-size:11px}.ft-benchmark-banner strong{white-space:nowrap}.ft-benchmark-banner span{color:#786f59}
 /* .ft-overhaul pins the header height, which clipped the new second row and
    let the room title spill onto the page background. Match its specificity. */
 .ft-overhaul .ft-header{height:auto;min-height:68px;flex-wrap:wrap;row-gap:4px;padding-top:10px;padding-bottom:10px}

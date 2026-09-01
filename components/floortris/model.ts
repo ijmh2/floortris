@@ -71,6 +71,13 @@ export type ActivityZone = { id: string; objectId: string; label: string; rect: 
 export type BriefRequirement = { key: string; label: string; quantity: number; met: number; source: 'layout' | 'fixed_fixture' | 'relationship'; required: boolean };
 export type Report = { validation: { status: 'ok' | 'warnings' | 'blocked'; hardFailures: number; warnings: number }; brief: { status: 'satisfied' | 'incomplete'; missingRequired: string[]; requirements?: BriefRequirement[] }; issues: Issue[]; cells: GridCell[]; zones: ActivityZone[]; columns: number; rows: number; flagsSummary: Record<string, number>; checkedRules: string[]; clearances: { hardRequestedCm: number; hardEffectiveCm: number; preferredRequestedCm: number; preferredEffectiveCm: number }; openFloorM2: number; conceptualOnly?: boolean };
 export type Candidate = { candidateId: string; proposalId: string; proposalRevision: number; ruleRevision: number; objectId?: string; variantId?: string; linkedDeskId?: string; attachedOpeningId?: string; supportObjectId?: string; lightingZone?: LightingZone; originCell: Cell; rotation: Rotation; wallAnchor?: Furniture['wallAnchor']; checkedRules: string[]; placementStatus: 'valid'; layoutStatus: Report['validation']['status']; qualityScore: number; frontFacing: Wall; backWall: Wall; backGapCm: number; touchingWalls: Wall[]; remainingIssues: Issue[]; remainingIssueCount: number; hasMoreRemainingIssues: boolean; details: { tool: string; args: Record<string, unknown> }; brief: Report['brief'] };
+export type PlannerStrategy = 'maximum_open_floor' | 'social_conversation' | 'tv_focused';
+export type StrategyAlternative = {
+  id: string; strategy: PlannerStrategy; label: string; summary: string;
+  layout: Layout; room: Room; rules: Rules; omitted: Omission[]; report: Report;
+  score: number; tradeoffs: string[]; planner: { trials: number; elapsedMs: number; complete: boolean };
+  baseCurrentRevision: number; baseRuleRevision: number;
+};
 export type ToolLogEntry = { seq: number; at: number; ms: number; name: string; args: string; ok: boolean; errorCode?: string; revision?: number; status?: string; validationStatus?: string; hardFailures?: number; readOnly: boolean };
 export type CommandResult = { operationSucceeded: boolean; error?: { code: string; message: string }; [key: string]: unknown };
 export const clone = <T,>(value: T): T => structuredClone(value);

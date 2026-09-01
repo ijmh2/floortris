@@ -1,6 +1,6 @@
 import { CATALOGUE, DEFAULT_RULES, PALETTES, fromVariant, makeDemo } from './data.ts';
 import { COFFEE_TABLE_GAP_MIN_CM, bedAccessBands, bounds, frontBand, furnitureBackWall, rectCells, validate, wallGaps, wantsWallBacking } from './sectional-engine.ts';
-import { clone, faces, opposite, rotations, type AppState, type ToolLogEntry, type Candidate, type CommandResult, type Furniture, type Layout, type Proposal, type Report, type Room, type Rules, type Wall } from './model.ts';
+import { clone, faces, opposite, rotations, type AppState, type ToolLogEntry, type Candidate, type CommandResult, type Furniture, type Layout, type PlannerStrategy, type Proposal, type Report, type Room, type Rules, type StrategyAlternative, type Wall } from './model.ts';
 import { TOOL_SCHEMAS, validateSchema } from './schemas.ts';
 import { roomEditStamp, validateRoomInputs } from './room-inputs.ts';
 import { profileRules } from './samples.ts';
@@ -37,6 +37,11 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const issueSignature = (i: Report['issues'][number]) => `${i.code}|${[...i.objectIds].sort().join(',')}|${i.destinationId || ''}`;
 const ISSUE_COST: Record<string, number> = { side_against_wall: 240, prefer_wall_backing: 220, bed_head_wall: 220, coffee_table_position: 210, coffee_table_gap: 200, chair_desk_offset: 140, prefer_flush_to_wall: 80, meeting_table_clearance: 80, prefer_sofa_into_room: 70, walk_tight: 40, prefer_desk_window: 25, table_centred_on_sofa: 25, prefer_even_distribution: 3, prefer_open_floor: 3 };
 const issueCost = (issue: Report['issues'][number]) => issue.severity === 'block' ? 10000 : ISSUE_COST[issue.code] || (issue.severity === 'warning' ? 50 : 1);
+const STRATEGIES: { id: PlannerStrategy; label: string; summary: string }[] = [
+  { id: 'maximum_open_floor', label: 'Maximum open floor', summary: 'Keeps the required brief while favouring the largest contiguous clear area.' },
+  { id: 'social_conversation', label: 'Social / conversation', summary: 'Prioritises a compact seating group and usable coffee-table relationship.' },
+  { id: 'tv_focused', label: 'TV-focused', summary: 'Prioritises the sofa-to-TV relationship and a clear full-width sightline.' },
+];
 const pause = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 function checkRules(r: Rules) {
   if (r.walkHardCm <= 0 || r.walkPreferredCm < r.walkHardCm) fail('invalid_constraints', 'Preferred walking width must be at least the positive hard minimum.');
@@ -48,7 +53,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   const documents = new Map<string, AppState>([[documentId(state), state]]);
   let toolSeq = 0;
   const listeners = new Set<() => void>(), candidates = new Map<string, Candidate>(), retries = new Map<string, { signature: string; result: CommandResult }>();
-  const candidateReports = new Map<string, Report>();
+  const candidateReports = new Map<string, Report>(), candidateStrategyCosts = new Map<string, number>(), strategyAlternatives = new Map<string, StrategyAlternative>();
   let candidateSeq = 0;
   const past: AppState[] = [], future: AppState[] = [];
   const getState = () => state;
@@ -57,7 +62,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
   const publish = (next: AppState, record = true) => {
     if (record) { past.push(state); if (past.length > 50) past.shift(); future.length = 0; }
-    state = frozen(next); candidates.clear(); candidateReports.clear(); listeners.forEach(listener => listener());
+    state = frozen(next); candidates.clear(); candidateReports.clear(); candidateStrategyCosts.clear(); listeners.forEach(listener => listener());
   };
   // Restore content, never old authority tokens: in-flight searches, retries and
   // captured Apply buttons must not become valid again after undo/redo/reset.
@@ -272,12 +277,20 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         const wallMounted = ['tv', 'wall_light', 'window_treatment'].includes(placed.kind) && placed.wallAnchor, gaps = wallMounted ? { north: Infinity, east: Infinity, south: Infinity, west: Infinity, [placed.wallAnchor!.wall]: 0 } as Record<Wall, number> : wallGaps(placed, p.room, unit);
         const backWall = wallMounted ? placed.wallAnchor!.wall : furnitureBackWall(placed), touchingWalls = (Object.keys(gaps) as Wall[]).filter(w => gaps[w] <= 0.5);
         const frontFacing = wallMounted ? opposite[placed.wallAnchor!.wall] : faces[placed.rotation];
-        candidateReports.set(candidateId, report); found.push({ candidateId, proposalId: p.id, proposalRevision: p.revision, ruleRevision: state.ruleRevision, objectId: existing?.id, variantId: placed.variantId, linkedDeskId: placed.linkedDeskId, attachedOpeningId: placed.attachedOpeningId, supportObjectId: placed.supportObjectId, lightingZone: placed.lightingZone, originCell: placed.originCell, rotation: placed.rotation, wallAnchor: placed.wallAnchor, checkedRules: report.checkedRules, placementStatus: 'valid', layoutStatus: report.validation.status, qualityScore, frontFacing, backWall, backGapCm: gaps[backWall], touchingWalls, remainingIssues: report.issues.slice(0, 10).map(i => ({ ...i, cells: i.cells.slice(0, 20), cellCount: i.cells.length, hasMoreCells: i.cells.length > 20 })), remainingIssueCount: report.issues.length, hasMoreRemainingIssues: report.issues.length > 10, details: { tool: 'checkLayout', args: { which: 'proposal', revision:p.revision, candidateId, detail:'issues', offset:0, limit:100 } }, brief: report.brief });
+        const strategy = a.strategy as PlannerStrategy | undefined;
+        let strategyCost = qualityScore * 100 - report.openFloorM2 * (strategy === 'maximum_open_floor' ? 100 : 5);
+        if (strategy === 'tv_focused') strategyCost += report.issues.filter(i => i.code.startsWith('tv_') || i.code === 'wall_attachment_overlap').reduce((sum, i) => sum + issueCost(i) * 250, 0);
+        if (strategy === 'social_conversation') {
+          const seating = testLayout.furniture.filter(o => o.kind === 'sofa' || o.kind === 'chair').map(o => bounds(o, unit));
+          if (seating.length > 1) { const centres = seating.map(b => ({ x: b.x + b.w / 2, y: b.y + b.d / 2 })); strategyCost += centres.slice(1).reduce((sum, c) => sum + Math.hypot(c.x - centres[0].x, c.y - centres[0].y), 0); }
+          strategyCost += report.issues.filter(i => ['coffee_table_position','coffee_table_gap','table_centred_on_sofa'].includes(i.code)).reduce((sum, i) => sum + issueCost(i) * 120, 0);
+        }
+        candidateReports.set(candidateId, report); candidateStrategyCosts.set(candidateId, strategyCost); found.push({ candidateId, proposalId: p.id, proposalRevision: p.revision, ruleRevision: state.ruleRevision, objectId: existing?.id, variantId: placed.variantId, linkedDeskId: placed.linkedDeskId, attachedOpeningId: placed.attachedOpeningId, supportObjectId: placed.supportObjectId, lightingZone: placed.lightingZone, originCell: placed.originCell, rotation: placed.rotation, wallAnchor: placed.wallAnchor, checkedRules: report.checkedRules, placementStatus: 'valid', layoutStatus: report.validation.status, qualityScore, frontFacing, backWall, backGapCm: gaps[backWall], touchingWalls, remainingIssues: report.issues.slice(0, 10).map(i => ({ ...i, cells: i.cells.slice(0, 20), cellCount: i.cells.length, hasMoreCells: i.cells.length > 20 })), remainingIssueCount: report.issues.length, hasMoreRemainingIssues: report.issues.length > 10, details: { tool: 'checkLayout', args: { which: 'proposal', revision:p.revision, candidateId, detail:'issues', offset:0, limit:100 } }, brief: report.brief });
       }
       if (trials % 8 === 0) await pause();
     }
     if (signal?.aborted) fail('cancelled', 'Search cancelled without committing.');
-    found.sort((a, b) => a.qualityScore - b.qualityScore || a.remainingIssueCount - b.remainingIssueCount || a.originCell.y - b.originCell.y || a.originCell.x - b.originCell.x || a.rotation - b.rotation);
+    found.sort((a, b) => (candidateStrategyCosts.get(a.candidateId) || a.qualityScore) - (candidateStrategyCosts.get(b.candidateId) || b.qualityScore) || a.remainingIssueCount - b.remainingIssueCount || a.originCell.y - b.originCell.y || a.originCell.x - b.originCell.x || a.rotation - b.rotation);
     for (const candidate of found.slice(requestedLimit)) candidateReports.delete(candidate.candidateId);
     return { found: found.slice(0, requestedLimit), trials, exhausted: trials >= 160 || Date.now() - started > timeLimit };
   }
@@ -387,9 +400,13 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           p.omitted = p.omitted.filter(o => o.objectId !== object.id);
         } else if (name === 'proposeLayout') {
           const profile = p.room.profile || { kind: 'lounge' as const };
+          const strategy = (a.strategy || 'tv_focused') as PlannerStrategy;
+          const loungeDefaults = strategy === 'maximum_open_floor' ? ['frame-tv-120']
+            : strategy === 'social_conversation' ? ['frame-tv-120', 'nest-chair-60', 'pebble-table-80', 'weave-rug-200']
+              : ['frame-tv-120', 'pebble-table-80', 'weave-rug-200'];
           const defaults = profile.kind === 'bedroom' ? [`haven-${profile.sleeping}-${profile.sleeping === 'single' ? '100' : profile.sleeping === 'double' ? '140' : '160'}`, ...(profile.storage ? ['tallline-wardrobe-100'] : []), ...(profile.workspace ? ['line-desk-100', 'nest-chair-60'] : []), ...Array.from({ length: Math.max(0, Math.min(2, profile.bedsideQuantity || 0)) }, () => 'nook-bedside-40')]
             : profile.kind === 'home_office' ? ['line-desk-100', 'nest-chair-60', ...(profile.seating ? ['nest-chair-60'] : []), ...(profile.storage ? ['archive-tall-80'] : [])]
-              : profile.kind === 'bathroom_concept' ? ['weave-mat-80'] : ['frame-tv-120', 'line-desk-100', 'pebble-table-80', 'weave-rug-200'];
+              : profile.kind === 'bathroom_concept' ? ['weave-mat-80'] : loungeDefaults;
           const requested: string[] = a.variantIds || defaults;
           requested.forEach(id => { if (!CATALOGUE.some(v => v.id === id)) fail('variant_unavailable', `Unknown catalogue variant: ${id}.`); });
           (a.quantities || []).forEach((q: { variantId: string }) => { if (!CATALOGUE.some(v => v.id === q.variantId)) fail('variant_unavailable', `Unknown catalogue variant: ${q.variantId}.`); });
@@ -406,7 +423,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           for (const object of [...p.layout.furniture]) {
             const report = validate(p.layout, p.room, p.rules, state.inventory); if (!report.issues.some(i => i.severity === 'block' && i.objectIds.includes(object.id))) continue;
             if (Date.now() - start > 6500) break;
-            const found = await search(p, { objectId: object.id, limit: 1 }, signal, 900); trials += found.trials;
+            const found = await search(p, { objectId: object.id, limit: 1, strategy }, signal, 900); trials += found.trials;
             if (found.found[0]) { const c = found.found[0]; const patch = { originCell: c.originCell, rotation: c.rotation, ...(c.wallAnchor ? { wallAnchor: c.wallAnchor } : {}), ...(c.attachedOpeningId ? { attachedOpeningId: c.attachedOpeningId } : {}), ...(c.supportObjectId ? { supportObjectId: c.supportObjectId } : {}) }; p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? checkPatch(o, patch, p.layout, p.room, p.rules) : o); }
           }
           for (const [requestIndex, variantId] of wanted.entries()) {
@@ -432,7 +449,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
               : v.kind === 'table_lamp' ? { supportObjectId: p.layout.furniture.find(canSupportLamp)?.id } : {};
             if (v.kind === 'window_treatment' && !relationArgs.attachedOpeningId) { p.omitted.push({ variantId, reason: 'Window treatment omitted: this room has no window to attach it to.' }); continue; }
             if (v.kind === 'table_lamp' && !('supportObjectId' in relationArgs && relationArgs.supportObjectId)) { p.omitted.push({ variantId, reason: 'Table lamp omitted: no table, desk or cabinet is present to support it.' }); continue; }
-            const found = Date.now() - start > 6500 ? { found: [] as Candidate[], trials: 0 } : await search(p, { variantId, limit: 1, ...relationArgs }, signal, 1100); trials += found.trials;
+            const found = Date.now() - start > 6500 ? { found: [] as Candidate[], trials: 0 } : await search(p, { variantId, limit: 1, strategy, ...relationArgs }, signal, 1100); trials += found.trials;
             if (found.found[0]) {
               const c = found.found[0], object = fromVariant(variantId, `planned-${p.id}-${p.revision}-${variantId}-${requestIndex + 1}`);
               Object.assign(object, { originCell: c.originCell, rotation: c.rotation, ...(c.attachedOpeningId ? {attachedOpeningId:c.attachedOpeningId} : {}), ...(c.supportObjectId ? {supportObjectId:c.supportObjectId} : {}), ...(c.lightingZone ? {lightingZone:c.lightingZone} : {}) }); if (c.wallAnchor) object.wallAnchor = c.wallAnchor;
@@ -444,14 +461,14 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
               // reserve the desk, then test and link its chair before retaining it.
               if (object.kind === 'desk' && linkedChairVariant && !p.layout.furniture.some(chair => chair.kind === 'chair' && chair.linkedDeskId === object.id)) {
                 const chairVariant = linkedChairVariant;
-                const chair = await search(p, { variantId: chairVariant, linkedDeskId: object.id, limit: 1 }, signal, 900); trials += chair.trials;
+                const chair = await search(p, { variantId: chairVariant, linkedDeskId: object.id, limit: 1, strategy }, signal, 900); trials += chair.trials;
                 if (chair.found[0]) { const cc = chair.found[0], linked = fromVariant(chairVariant, `planned-${p.id}-${p.revision}-${chairVariant}-linked-${requestIndex + 1}`); Object.assign(linked, { originCell: cc.originCell, rotation: cc.rotation, linkedDeskId: object.id }); p.layout.furniture.push(linked); }
                 else { p.layout.furniture = p.layout.furniture.filter(o => o.id !== object.id); p.omitted.push({ variantId, reason: 'Desk omitted because no linked chair could be placed in the same bounded work arrangement.' }); }
               }
             }
-            else { const relational = v.kind === 'window_treatment' || v.kind === 'table_lamp', smaller = !relational && CATALOGUE.filter(x => x.kind === v.kind && x.sizeCm.w * x.sizeCm.d < v.sizeCm.w * v.sizeCm.d).sort((a, b) => b.sizeCm.w * b.sizeCm.d - a.sizeCm.w * a.sizeCm.d)[0]; const checkedSmaller = smaller && Date.now() - start <= 6500 ? await search(p,{variantId:smaller.id,limit:1},signal,600) : undefined; trials += checkedSmaller?.trials || 0; p.omitted.push({ variantId, reason: `No placement found in this bounded greedy scan. ${p.rules.requiredKinds.includes(v.kind) ? 'This required function is still missing.' : 'Optional piece omitted.'} Not proof of infeasibility.`, ...(smaller && checkedSmaller?.found[0] ? { alternativeVariantId: smaller.id, alternativeChecked: { trials:checkedSmaller.trials, placementStatus:'valid', layoutStatus:checkedSmaller.found[0].layoutStatus, proposalRevision:p.revision, ruleRevision:state.ruleRevision } } : {}) }); }
+            else { const relational = v.kind === 'window_treatment' || v.kind === 'table_lamp', smaller = !relational && CATALOGUE.filter(x => x.kind === v.kind && x.sizeCm.w * x.sizeCm.d < v.sizeCm.w * v.sizeCm.d).sort((a, b) => b.sizeCm.w * b.sizeCm.d - a.sizeCm.w * a.sizeCm.d)[0]; const checkedSmaller = smaller && Date.now() - start <= 6500 ? await search(p,{variantId:smaller.id,limit:1,strategy},signal,600) : undefined; trials += checkedSmaller?.trials || 0; p.omitted.push({ variantId, reason: `No placement found in this bounded greedy scan. ${p.rules.requiredKinds.includes(v.kind) ? 'This required function is still missing.' : 'Optional piece omitted.'} Not proof of infeasibility.`, ...(smaller && checkedSmaller?.found[0] ? { alternativeVariantId: smaller.id, alternativeChecked: { trials:checkedSmaller.trials, placementStatus:'valid', layoutStatus:checkedSmaller.found[0].layoutStatus, proposalRevision:p.revision, ruleRevision:state.ruleRevision } } : {}) }); }
           }
-          if (signal?.aborted) fail('cancelled', 'Planning cancelled without committing.'); guard(a, 'layout'); result = commit(p, { planner: { kind: 'deterministic_bounded_greedy', trials, elapsedMs: Date.now() - start, complete: validate(p.layout, p.room, p.rules, state.inventory).validation.hardFailures === 0 && validate(p.layout, p.room, p.rules, state.inventory).brief.status === 'satisfied' } });
+          if (signal?.aborted) fail('cancelled', 'Planning cancelled without committing.'); guard(a, 'layout'); result = commit(p, { planner: { kind: 'deterministic_bounded_greedy', strategy, trials, elapsedMs: Date.now() - start, complete: validate(p.layout, p.room, p.rules, state.inventory).validation.hardFailures === 0 && validate(p.layout, p.room, p.rules, state.inventory).brief.status === 'satisfied' } });
           return result;
         }
         if (signal?.aborted) fail('cancelled', 'Command cancelled without committing.');
@@ -627,6 +644,49 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   const applyProposal = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'layout'), report = validate(p.layout, p.room, p.rules, state.inventory); if (report.validation.hardFailures || report.brief.status !== 'satisfied') fail('blocked_apply', 'Resolve hard failures and complete the active room brief before Apply.'); const next = clone(state); next.current = clone(p.layout); next.currentRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, currentRevision: state.currentRevision, ...(report.conceptualOnly ? { conceptualOnly: true } : {}) }; });
   const confirmSetup = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'setup'); const inputError = validateRoomInputs(p.room, p.rules); if (inputError) fail('invalid_room_inputs', inputError); checkRules(p.rules); const next = clone(state); next.room = clone(p.room); next.rules = clone(p.rules); next.ruleRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, ruleRevision: state.ruleRevision, validation: validate(next.current, next.room, next.rules, next.inventory).validation }; });
   const discardProposal = () => { const next = clone(state); next.proposal = null; publish(next); return { operationSucceeded: true }; };
+  /** Human-invoked local comparison. Each strategy runs in an isolated store,
+   * is checked by the normal engine, and leaves both Current and Proposal
+   * untouched until the human selects one result for review. */
+  const generateStrategyAlternatives = async (signal?: AbortSignal): Promise<StrategyAlternative[]> => {
+    const baseCurrentRevision = state.currentRevision, baseRuleRevision = state.ruleRevision;
+    const alternatives: StrategyAlternative[] = [];
+    strategyAlternatives.clear();
+    for (const definition of STRATEGIES) {
+      if (signal?.aborted) throw new DOMException('Strategy comparison cancelled.', 'AbortError');
+      const isolated = clone(state); isolated.proposal = null; isolated.sequence++;
+      const planner = createStore(isolated);
+      const created = await planner.execute('createProposal', { kind: 'layout', expectedCurrentRevision: isolated.currentRevision, expectedRuleRevision: isolated.ruleRevision, idempotencyKey: `strategy-create-${definition.id}-${isolated.sequence}` }, signal);
+      if (!created.operationSucceeded || !planner.getState().proposal) continue;
+      const draft = planner.getState().proposal!;
+      const planned = await planner.execute('proposeLayout', { proposalId: draft.id, revision: draft.revision, strategy: definition.id, idempotencyKey: `strategy-plan-${definition.id}-${isolated.sequence}` }, signal);
+      const result = planner.getState().proposal;
+      if (!planned.operationSucceeded || !result) continue;
+      const report = validate(result.layout, result.room, result.rules, isolated.inventory);
+      const strategyBonus = definition.id === 'maximum_open_floor' ? Math.min(20, report.openFloorM2 * 2)
+        : definition.id === 'tv_focused' ? (report.issues.some(issue => issue.code.startsWith('tv_')) ? 0 : 8)
+          : Math.min(8, result.layout.furniture.filter(item => item.kind === 'sofa' || item.kind === 'chair').length * 2);
+      const score = Math.max(0, Math.min(100, Math.round(100 - report.validation.hardFailures * 35 - report.brief.missingRequired.length * 20 - report.validation.warnings * 3 + strategyBonus)));
+      const tradeoffs = [
+        `${report.openFloorM2.toFixed(1)} m² largest clear rectangle`,
+        report.validation.hardFailures ? `${report.validation.hardFailures} blocking issue${report.validation.hardFailures === 1 ? '' : 's'}` : 'No hard failures',
+        report.validation.warnings ? `${report.validation.warnings} advisory warning${report.validation.warnings === 1 ? '' : 's'}` : 'No advisory warnings',
+        result.omitted.length ? `${result.omitted.length} omitted item${result.omitted.length === 1 ? '' : 's'}` : 'No requested items omitted',
+      ];
+      const plannerStats = planned.planner as { trials?: number; elapsedMs?: number; complete?: boolean } | undefined;
+      const alternative: StrategyAlternative = { id: `strategy-${definition.id}-${baseCurrentRevision}-${baseRuleRevision}`, strategy: definition.id, label: definition.label, summary: definition.summary, layout: clone(result.layout), room: clone(result.room), rules: clone(result.rules), omitted: clone(result.omitted), report: clone(report), score, tradeoffs, planner: { trials: plannerStats?.trials || 0, elapsedMs: plannerStats?.elapsedMs || 0, complete: plannerStats?.complete === true }, baseCurrentRevision, baseRuleRevision };
+      strategyAlternatives.set(alternative.id, alternative); alternatives.push(clone(alternative));
+    }
+    return alternatives;
+  };
+  const selectStrategyAlternative = (id: string) => human(() => {
+    const alternative = strategyAlternatives.get(id) || fail('strategy_not_found', 'That comparison result is unavailable. Run the comparison again.');
+    if (alternative.baseCurrentRevision !== state.currentRevision || alternative.baseRuleRevision !== state.ruleRevision) fail('revision_conflict', 'Current or the accepted rules changed. Run the comparison again.');
+    if (alternative.report.validation.hardFailures) fail('blocked_strategy', 'A strategy with hard failures cannot become the review proposal.');
+    const next = clone(state); next.sequence++;
+    next.proposal = { id: `proposal-${next.sequence}`, kind: 'layout', revision: 1, baseCurrentRevision: state.currentRevision, baseRuleRevision: state.ruleRevision, layout: clone(alternative.layout), room: clone(alternative.room), rules: clone(alternative.rules), omitted: clone(alternative.omitted) };
+    publish(next); strategyAlternatives.clear();
+    return envelope(next.proposal, { message: `${alternative.label} is now the Proposal. It has not been applied; compare it with Yours and leave Apply to the human.` });
+  });
   const humanStageRoom = (room: Room, rules: Rules, expectedStamp: string, replaceProposal = false) => human(() => {
     if (expectedStamp !== roomEditStamp(state)) fail('revision_conflict', 'The room or proposal changed while this editor was open. Close and reopen it before staging.');
     const error = validateRoomInputs(room, rules); if (error) fail('invalid_room_inputs', error);
@@ -659,6 +719,6 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     publish(target, false);
     return { operationSucceeded: true, documentId: id, message: `Opened ${target.room.name}. Your previous room and its draft are saved.` };
   });
-  return { getState, getDocuments, getHistory, getToolLog, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanRestoreOwned, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, humanOpenRoom, applyProposal, confirmSetup, discardProposal, resetDemo };
+  return { getState, getDocuments, getHistory, getToolLog, subscribe, execute, undo, redo, humanStageRoom, humanUpdate, humanAdd, humanRemove, humanRestoreOwned, humanSetLocks, humanSetRequired, humanAddOwned, humanMeasureOwned, humanClassifyOwned, humanSetRoomFinish, humanOpenRoom, generateStrategyAlternatives, selectStrategyAlternative, applyProposal, confirmSetup, discardProposal, resetDemo };
 }
 export type FloortrisStore = ReturnType<typeof createStore>;

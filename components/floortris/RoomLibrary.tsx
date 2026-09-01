@@ -1,6 +1,7 @@
 import { fromVariant, type Variant } from './data.ts';
 import { bedAccessBands, bounds, frontBand } from './engine.ts';
 import type { RoomProfile, Rules } from './model.ts';
+import { BENCHMARKS } from './benchmarks.ts';
 
 /** Sample IDs match `roomSession`, which owns each sample's own storage key. */
 export const ROOM_PRESETS = [
@@ -11,6 +12,7 @@ export const ROOM_PRESETS = [
   { id: 'office', label: 'Home office' },
   { id: 'bathroom', label: 'Bathroom concept' },
   { id: 'sketch', label: 'Measured sketch' },
+  ...BENCHMARKS.map(({id,label})=>({id,label})),
 ];
 export function dockVariants(profile: RoomProfile): string[] {
   if (profile.kind === 'bedroom') return [profile.sleeping === 'king' ? 'haven-king-160' : profile.sleeping === 'double' ? 'haven-double-140' : 'haven-single-100', 'nook-bedside-40', 'tallline-wardrobe-100', 'fern-40'];
