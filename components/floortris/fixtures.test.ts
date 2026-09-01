@@ -67,10 +67,12 @@ test('wall lights require a real segment and reject openings or tall furniture a
 test('floor lamps are ordinary solid obstacles and table lamps require full measured support', () => {
   const state=quiet(), floor=fromVariant('stem-floor-lamp-45','floor'), chair=fromVariant('nest-armchair-80','chair');floor.originCell=chair.originCell={x:5,y:5};
   let codes=issueCodes({furniture:[floor,chair],appearance:state.current.appearance},state.room,state.rules);assert.ok(codes.has('solid_overlap'));assert.equal(isFloorOccupant(floor),true);
-  const table=fromVariant('pebble-side-45','table');table.originCell={x:8,y:8};
+  const table=fromVariant('pebble-side-45','table');table.originCell={x:8,y:0};
   const lamp=fromVariant('nook-table-lamp-28','table-lamp');lamp.supportObjectId=table.id;
   const supported=normalizeFixturePlacement(lamp,state.room,state.rules,{furniture:[table],appearance:state.current.appearance},true);
-  codes=issueCodes({furniture:[table,supported],appearance:state.current.appearance},state.room,state.rules);assert.ok(!codes.has('table_lamp_unsupported'));assert.equal(supported.elevationCm,50);
+  const supportedReport=validate({furniture:[table,supported],appearance:state.current.appearance},state.room,state.rules,[]);
+  codes=new Set(supportedReport.issues.map(issue=>issue.code));assert.ok(!codes.has('table_lamp_unsupported'));assert.equal(supported.elevationCm,50);
+  assert.ok(!supportedReport.issues.some(issue=>issue.code==='prefer_flush_to_wall'&&issue.objectIds.includes(supported.id)),'a lamp fixed to its support must not receive an independent wall-position warning');
   const moved={...supported,originCell:{x:0,y:0}};codes=issueCodes({furniture:[table,moved],appearance:state.current.appearance},state.room,state.rules);assert.ok(codes.has('table_lamp_unsupported'));
 });
 

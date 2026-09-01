@@ -67,11 +67,10 @@ but no tools can be discovered. To see the agent side you need one of:
 - **ChatGPT's in-app browser**, or
 - **Google Chrome** with `chrome://flags/#enable-webmcp-testing` set to Enabled, then relaunch.
 
-In ChatGPT, pick a model that can actually call page tools: **GPT-5.6 Sol** or
-**Terra**. **Luna does not support WebMCP today**, and on Luna the tools simply
-never get called — which looks exactly like a broken integration but is not one.
-The tools panel is the way to tell the two apart: if it reports registered tools,
-the page is fine and the model is the limitation.
+Use ChatGPT's in-app browser or another compatible Chrome WebMCP runtime. Tool
+availability depends on the runtime exposing the draft API, not on a particular
+model name. The tools panel reports page registration independently of whether
+an agent chooses to call a tool.
 
 Once enabled, open the live URL and the tools panel (the tools status button above the board)
 reports how many native tools registered. An agent can then call any of the 16.
@@ -165,7 +164,7 @@ Exactly these names are registered:
 
 The adapter follows the **26 August 2026 draft**: [WebMCP community report](https://webmachinelearning.github.io/webmcp/). It awaits each `registerTool` result, supplies an AbortController signal as registration options for cleanup, reads `execute`'s `{signal}`, and returns the structured result directly. It only announces a registered state after all sixteen registrations resolve. Failure aborts that mount's registrations. Unsupported browsers retain the full human editor. Registration does not claim that an external agent has discovered or executed the tools.
 
-Tools contain `readOnlyHint` plus `untrustedContentHint: true`, since user-entered labels are data and may appear in results. No tool performs Apply, Confirm room inputs, Discard, Unlock, or changes the selected UI view.
+Tools contain exact `readOnlyHint` values plus `untrustedContentHint: true`, since user-entered labels are data and may appear in results. Apply, Confirm room inputs, Discard, Unlock and view switching are not exposed as WebMCP tools and are reserved for the human. Generic browser automation is outside this WebMCP capability boundary; the absence of these tools is not described as a browser security sandbox.
 
 ### Agent-authored custom furniture
 
@@ -228,7 +227,7 @@ The provided demo takes **four checked placements**: wall TV, compact desk, low 
 - A stale draft must be discarded and recreated. There is no automatic rebase. Only one active setup/layout draft is supported at once. Undo/redo holds up to 50 complete document states for the current session. Restoring content advances authority revisions and issues fresh proposal IDs, so old agent commands and Apply buttons do not regain validity.
 - Native calls have no backend, no secrets, no external APIs or real purchasing. The UI's bounded local planner is page code, never an external agent conversation.
 - Curtains model one static shallow projection and blinds model a closed fitted plane; Floortris does not simulate fabric movement, blind controls, daylight or radiator heat. Lighting checks mount geometry, a disclosed 200 cm planning head-clearance assumption and simple seating/reading/circulation proximity. They are not photometric, glare, wiring, load, electrical-code or building-code calculations. Ceiling fixtures are emissive visual models rather than a physical light simulation.
-- Room data is saved in `localStorage`; the original lounge retains `floortris.v1.local` and the 3 m lounge retains `floortris.v1.sample.3m`. Every additional preset has an independent `floortris.v2.sample.*` key. Both V1 and V2 documents reload without resetting; migration adds a missing lounge profile without rewriting furniture or revisions. Export downloads JSON; Import validates a JSON export under 1 MB and opens it as a separate local room. There is no cloud synchronization. Creation, placement and opted-in planner idempotency caches are session-local and bounded to 100 requests; they do not survive page reload.
+- Room data is saved in `localStorage`; the original lounge retains `floortris.v1.local` and the 3 m lounge retains `floortris.v1.sample.3m`. Every additional preset has an independent `floortris.v2.sample.*` key. Both V1 and V2 documents reload without resetting; migration adds a missing lounge profile without rewriting furniture or revisions. Export downloads JSON. Import uses a versioned, closed document schema: unknown fields, invalid revisions/authority, duplicate IDs, dangling references, altered catalogue semantics and forged custom/fixed roles fail closed. Valid imports open as a separate local room. If browser storage is corrupt, Floortris preserves the original bytes and pauses saving/tools while the human downloads them, recovers individually valid rooms, or explicitly resets only damaged keys. There is no cloud synchronization. Creation, placement and opted-in planner idempotency caches are session-local and bounded to 100 requests; they do not survive page reload.
 
 These are product planning assumptions, not accessibility certification, building/fire regulation advice, radiator safety guidance, sunlight analysis or a surveyed real room.
 

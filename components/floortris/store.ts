@@ -98,6 +98,12 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     return { operationSucceeded: true, documentId: documentId(state), proposalId: p.id, revision: p.revision, status: proposalStatus(state, p), appearance: clone(p.layout.appearance), profile: p.room.profile || { kind: 'lounge' }, conceptualOnly: r.conceptualOnly || false, baseCurrentRevision: p.baseCurrentRevision, baseRuleRevision: p.baseRuleRevision, validation: r.validation, brief: r.brief, issues, issueCount: r.issues.length, hasMoreIssues: r.issues.length > issues.length, flagsSummary: r.flagsSummary, omitted: p.omitted, ...extra };
   };
   const commit = (p: Proposal, extra: Args = {}) => { p.revision++; const next = clone(state); next.proposal = p; publish(next); return envelope(p, extra); };
+  const newBlockingIssueForAddition = (layout: Layout, room: Room, rules: Rules, inventory: Furniture[], object: Furniture) => {
+    const before = validate(layout, room, rules, inventory, false);
+    const baseline = new Set(before.issues.filter(issue => issue.severity === 'block').map(issueSignature));
+    const after = validate({ ...layout, furniture: [...layout.furniture, object] }, room, rules, inventory, false);
+    return after.issues.find(issue => issue.severity === 'block' && (issue.objectIds.includes(object.id) || !baseline.has(issueSignature(issue))));
+  };
   const authoritative = (object: Furniture) => object.ownership === 'owned' ? state.inventory.find(o => o.id === object.id) || fail('unknown_owned_instance', 'Owned piece has no authoritative measured inventory record.') : object;
   const checkPatch = (object: Furniture, patch: HumanPatch, layout: Layout, room: Room, rules: Rules): Furniture => {
     if (object.ownership === 'fixed') fail('lock_violation', 'Fixed room fixtures cannot be changed through furniture commands.');
@@ -355,11 +361,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           if (p.layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 movable pieces.');
           const object = makeCustomFurniture({ label: a.label, kind: a.kind, widthCm: a.widthCm, depthCm: a.depthCm, heightCm: a.heightCm, positionCm: a.positionCm, rotation: a.rotation, appearance: a.appearance, ...(a.linkedDeskId ? { linkedDeskId: a.linkedDeskId } : {}), ...(a.geometry ? { geometry: a.geometry } : {}) }, `custom-${p.id}-${p.revision + 1}`, p.rules.cellCm);
           if (a.linkedDeskId) checkPatch(object, { linkedDeskId: a.linkedDeskId }, p.layout, p.room, p.rules);
-          const before = validate(p.layout, p.room, p.rules, state.inventory, false);
-          const baseline = new Set(before.issues.filter(issue => issue.severity === 'block').map(issueSignature));
-          const hypothetical = { ...p.layout, furniture: [...p.layout.furniture, object] };
-          const after = validate(hypothetical, p.room, p.rules, state.inventory, false);
-          const blocked = after.issues.find(issue => issue.severity === 'block' && (issue.objectIds.includes(object.id) || !baseline.has(issueSignature(issue))));
+          const blocked = newBlockingIssueForAddition(p.layout, p.room, p.rules, state.inventory, object);
           if (blocked) fail(blocked.code, `${blocked.code}: ${blocked.message} Custom furniture was not added.`);
           p.layout.furniture.push(object);
           const nextRevision = p.revision + 1;
@@ -378,7 +380,10 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           if (object.kind === 'tv') object.targetSofaId = a.targetSofaId || p.layout.furniture.find(o => o.kind === 'sofa')?.id;
           if (object.kind === 'window_treatment' && !(candidatePatch?.attachedOpeningId || a.attachedOpeningId)) fail('invalid_arguments', 'A window treatment requires attachedOpeningId naming an existing window.');
           if (object.kind === 'table_lamp' && !(candidatePatch?.supportObjectId || a.supportObjectId)) fail('invalid_arguments', 'A table lamp requires supportObjectId naming a table, desk or cabinet.');
-          object = checkPatch(object, candidatePatch || sanitizedPatch(a), p.layout, p.room, p.rules); p.layout.furniture.push(object);
+          object = checkPatch(object, candidatePatch || sanitizedPatch(a), p.layout, p.room, p.rules);
+          const blocked = newBlockingIssueForAddition(p.layout, p.room, p.rules, state.inventory, object);
+          if (blocked) fail(blocked.code, `${blocked.code}: ${blocked.message} Furniture was not added.`);
+          p.layout.furniture.push(object);
           p.omitted = p.omitted.filter(o => o.objectId !== object.id);
         } else if (name === 'proposeLayout') {
           const profile = p.room.profile || { kind: 'lounge' as const };
@@ -539,10 +544,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     const base = normalizeFixturePlacement(o, room, rules, layout, o.kind === 'table_lamp');
     const placed = patch ? checkPatch(base, patch, layout, room, rules) : base;
     if (rejectInvalid) {
-      const before = validate(layout, which === 'current' ? next.room : next.proposal!.room, which === 'current' ? next.rules : next.proposal!.rules, next.inventory);
-      const baseline = new Set(before.issues.filter(i => i.severity === 'block').map(issueSignature));
-      const after = validate({ ...layout, furniture: [...layout.furniture, placed] }, which === 'current' ? next.room : next.proposal!.room, which === 'current' ? next.rules : next.proposal!.rules, next.inventory);
-      const blocked = after.issues.find(i => i.severity === 'block' && (i.objectIds.includes(placed.id) || !baseline.has(issueSignature(i))));
+      const blocked = newBlockingIssueForAddition(layout, room, rules, next.inventory, placed);
       if (blocked) fail(blocked.code, `${blocked.code}: ${blocked.message}`);
     }
     layout.furniture.push(placed); if (which === 'current') next.currentRevision++; else next.proposal!.revision++; publish(next); return { operationSucceeded: true, objectId: o.id };

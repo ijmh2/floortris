@@ -22,6 +22,7 @@ const EXPECTED_TOOLS = [
   'listFurniture', 'placeFurniture', 'proposeLayout', 'removeFurniture', 'setAppearance',
   'setConstraints', 'setOpening', 'setRoomGeometry', 'updateFurniture',
 ];
+const READ_ONLY_TOOLS = new Set(['checkLayout', 'findPlacements', 'getRoomState', 'listCatalogue', 'listFurniture']);
 
 let chromium;
 try { ({ chromium } = await import('playwright-core')); }
@@ -46,7 +47,7 @@ try {
   await page.waitForFunction(async () => (await document.modelContext.getTools()).length >= 16, null, { timeout: 20000 })
     .catch(() => {});
 
-  const result = await page.evaluate(async (expected) => {
+  const result = await page.evaluate(async ({ expected, readOnly }) => {
     const mc = document.modelContext;
     const tools = await mc.getTools();
     const byName = new Map(tools.map(t => [t.name, t]));
@@ -54,6 +55,15 @@ try {
     const call = async (name, args) => JSON.parse(await mc.executeTool(byName.get(name), JSON.stringify(args)));
 
     const missing = expected.filter(n => !byName.has(n));
+    const schemaIsClosed = schema => {
+      if (!schema || typeof schema !== 'object') return true;
+      if (schema.type === 'object' && schema.additionalProperties !== false) return false;
+      return Object.values(schema.properties || {}).every(schemaIsClosed)
+        && (!schema.items || schemaIsClosed(schema.items))
+        && (schema.anyOf || []).every(schemaIsClosed);
+    };
+    const annotationFailures = tools.filter(tool => tool.annotations?.readOnlyHint !== readOnly.includes(tool.name) || tool.annotations?.untrustedContentHint !== true).map(tool => tool.name);
+    const openSchemaTools = tools.filter(tool => !schemaIsClosed(tool.inputSchema)).map(tool => tool.name);
     const room = await call('getRoomState', { which: 'current' });
     // Exercise the product's primary agent path, not just the older draft flow.
     const generated = await call('generateRoom', {
@@ -91,6 +101,15 @@ try {
       idempotencyKey: 'native-custom-' + Date.now(),
     });
     draft.revision = custom.revision;
+    const unsafeDoorPlant = await call('placeFurniture', {
+      ...draft, variantId: 'fern-40', originCell: { x: 1, y: 31 }, rotation: 0,
+      idempotencyKey: 'native-reject-door-plant-' + Date.now(),
+    });
+    const unsafeDoorTv = await call('placeFurniture', {
+      ...draft, variantId: 'frame-tv-120', wallAnchor: { wall: 'south', segmentId: 'wall-5', offsetCm: 20 },
+      elevationCm: 110, targetSofaId: custom.customFurniture?.id,
+      idempotencyKey: 'native-reject-door-tv-' + Date.now(),
+    });
     const generatedRoom = await call('getRoomState', { which: 'proposal' });
     const fixtures = await call('listFurniture', { which: 'proposal' });
     const checked = await call('checkLayout', { which: 'proposal', detail: 'issues' });
@@ -99,7 +118,8 @@ try {
 
     return {
       toolCount: tools.length, missing,
-      annotated: tools.filter(t => t.annotations && 'readOnlyHint' in t.annotations).length,
+      annotationFailures, openSchemaTools,
+      contractEvidence: document.querySelector('.ft-tools-chip')?.getAttribute('title') || '',
       readSucceeded: room.operationSucceeded, generatedSucceeded: generated.operationSucceeded,
       plannedStatus: generated.status, plannedBlocking: generated.validation?.hardFailures,
       checkedStatus: checked.validation?.status, checkedBlocking: checked.validation?.hardFailures, brief: checked.brief?.status,
@@ -111,17 +131,22 @@ try {
       ceilingSucceeded: ceiling.operationSucceeded,
       customSucceeded: custom.operationSucceeded,
       customReview: custom.review,
+      unsafeDoorPlantRefused: unsafeDoorPlant.operationSucceeded === false && unsafeDoorPlant.error?.code === 'door_swing_obstructed',
+      unsafeDoorTvRefused: unsafeDoorTv.operationSucceeded === false && unsafeDoorTv.error?.code === 'wall_attachment_overlap',
+      unsafePlacementRevisionUnchanged: generatedRoom.revision === draft.revision,
       blindLinked: fixtures.furniture?.some(item => item.fixtureType === 'blind' && item.attachedOpeningId === 'native-window'),
       ceilingMounted: fixtures.furniture?.some(item => item.fixtureType === 'recessed' && item.kind === 'ceiling_light'),
       customMeasured: fixtures.furniture?.some(item => item.ownership === 'custom' && item.label === 'Native U sectional' && item.sizeCm?.w === 400 && item.sizeCm?.d === 240 && item.sizeCm?.h === 85 && item.customProvenance?.tool === 'createCustomFurniture' && item.geometry?.type === 'sectional' && item.geometry?.modules?.length === 3
         && item.geometry.modules[0].xCm + item.geometry.modules[0].widthCm === item.geometry.modules[1].xCm
         && item.geometry.modules[1].xCm + item.geometry.modules[1].widthCm === item.geometry.modules[2].xCm),
     };
-  }, EXPECTED_TOOLS);
+  }, { expected: EXPECTED_TOOLS, readOnly: [...READ_ONLY_TOOLS] });
 
   check(`all ${EXPECTED_TOOLS.length} tools registered`, result.missing.length === 0,
     result.missing.length ? 'missing: ' + result.missing.join(', ') : `${result.toolCount} discovered`);
-  check('every tool carries annotations', result.annotated === result.toolCount, `${result.annotated}/${result.toolCount}`);
+  check('every tool has exact readOnlyHint and untrustedContentHint:true', result.annotationFailures.length === 0, result.annotationFailures.join(', '));
+  check('every object input schema fails closed', result.openSchemaTools.length === 0, result.openSchemaTools.join(', '));
+  check('page exposes dated contract release evidence', /contract \d{4}-\d{2}-\d{2}/.test(result.contractEvidence), result.contractEvidence);
   check('getRoomState reads Current', result.readSucceeded);
   check('generateRoom opens a human-review proposal', result.generatedSucceeded && result.review?.requiresHumanApply === true && result.review?.applied === false);
   check('custom outline returns six authoritative wall segments', result.customPointCount === 6 && result.customSegmentCount === 6,
@@ -129,6 +154,8 @@ try {
   check('native blind attaches to its measured window', result.blindSucceeded && result.blindLinked);
   check('native recessed light mounts inside the custom ceiling', result.ceilingSucceeded && result.ceilingMounted);
   check('native custom furniture preserves its measured envelope and proposal-only provenance', result.customSucceeded && result.customMeasured && result.customReview?.requiresHumanApply === true && result.customReview?.applied === false);
+  check('direct floor placement cannot enter the door swing or advance the proposal', result.unsafeDoorPlantRefused && result.unsafePlacementRevisionUnchanged);
+  check('wall TV cannot mount across the entrance or advance the proposal', result.unsafeDoorTvRefused && result.unsafePlacementRevisionUnchanged);
   check('generated proposal reaches ready_for_review', result.plannedStatus === 'ready_for_review', `status=${result.plannedStatus}`);
   check('generated layout has no hard failures', result.plannedBlocking === 0, `blocking=${result.plannedBlocking}`);
   // Soft warnings are expected and fine here: the L-shape exercises wall-backed

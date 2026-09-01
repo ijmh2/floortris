@@ -97,6 +97,16 @@ test('creation and placement retries do not duplicate records',async()=>{
   assert.equal((await store.execute('placeFurniture',placement)).operationSucceeded,true);assert.equal(JSON.stringify(store.getState()),placed);
 });
 
+test('direct catalogue placement refuses new hard failures without advancing the proposal',async()=>{
+  const store=await draft(),before=clone(store.getState()),p=before.proposal!;
+  const doorPlant=await store.execute('placeFurniture',{...rev(store),variantId:'fern-40',originCell:{x:1,y:19},rotation:0,idempotencyKey:'reject-door-plant'});
+  assert.equal(doorPlant.operationSucceeded,false);assert.equal(doorPlant.error?.code,'door_swing_obstructed');assert.deepEqual(store.getState(),before);
+  const doorTv=await store.execute('placeFurniture',{...rev(store),variantId:'frame-tv-120',wallAnchor:{wall:'south',offsetCm:20},elevationCm:110,targetSofaId:'owned-sofa',idempotencyKey:'reject-door-tv'});
+  assert.equal(doorTv.operationSucceeded,false);assert.equal(doorTv.error?.code,'wall_attachment_overlap');assert.deepEqual(store.getState(),before);
+  const safe=await store.execute('placeFurniture',{...rev(store),variantId:'pebble-table-80',originCell:{x:12,y:12},rotation:0,idempotencyKey:'allow-safe-table'});
+  assert.equal(safe.operationSucceeded,true);assert.equal(store.getState().proposal!.revision,p.revision+1);
+});
+
 test('palette changes cannot change geometry or semantic cell flags',async()=>{
   const store=await draft();const p=store.getState().proposal!;const before=validate(p.layout,p.room,p.rules,store.getState().inventory);
   assert.equal((await store.execute('setAppearance',{...rev(store),target:'furniture',objectId:'owned-sofa',paletteId:'clay'})).operationSucceeded,true);
@@ -330,7 +340,7 @@ test('desk-chair remediation only suggests public, schema-valid tool calls', asy
   if (issue.fix!.tool === 'findPlacements') {
     const candidate = (repaired.candidates as import('./model.ts').Candidate[])[0]!;
     const p = store.getState().proposal!;
-    assert.equal((await store.execute('placeFurniture', { proposalId: p.id, revision: p.revision, candidateId: candidate.candidateId, idempotencyKey: 'repair-desk-chair' })).operationSucceeded, true);
+    assert.equal((await store.execute('updateFurniture', { proposalId: p.id, revision: p.revision, objectId: candidate.objectId, candidateId: candidate.candidateId })).operationSucceeded, true);
   }
   const final = await store.execute('checkLayout', { which: 'proposal', detail: 'issues' });
   assert.equal((final.brief as import('./model.ts').Report['brief']).status, 'satisfied');

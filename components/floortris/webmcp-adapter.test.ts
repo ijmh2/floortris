@@ -7,6 +7,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AgentGuide from './AgentGuide.tsx';
 import type { CommandResult } from './model.ts';
+import { TOOL_SCHEMAS } from './schemas.ts';
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 
 test('unsupported browser is reported honestly and manual store remains usable',()=>{
@@ -38,6 +39,19 @@ test('partial asynchronous registration failure cancels this mount and never cla
   const dispose=registerFloortrisTools(createStore(),s=>statuses.push(s),host as unknown as Document);await tick();
   assert.equal(statuses.at(-1)?.state,'error');assert.equal(statuses.at(-1)?.count,0);assert.ok(signal?.aborted);assert.ok(!statuses.some(s=>s.state==='registered'));dispose();
   assert.ok(statuses.at(-1)?.message.includes(AGENT_UNAVAILABLE));
+});
+
+test('registered annotations exactly match every closed tool contract',async()=>{
+  type Registered={name:string;annotations:{readOnlyHint:boolean;untrustedContentHint:boolean};inputSchema:unknown};
+  const registered:Registered[]=[];
+  const host={modelContext:{registerTool:(tool:Registered)=>{registered.push(tool);}}};
+  const dispose=registerFloortrisTools(createStore(),()=>{},host as unknown as Document);await tick();
+  assert.equal(registered.length,16);
+  for(const tool of registered){
+    assert.deepEqual(tool.annotations,{readOnlyHint:TOOL_SCHEMAS[tool.name].readOnly,untrustedContentHint:true},tool.name);
+    assert.equal(tool.inputSchema,TOOL_SCHEMAS[tool.name].inputSchema,tool.name);
+  }
+  dispose();
 });
 
 test('the optional agent guide explains native discovery and same-browser visibility without hydration',()=>{

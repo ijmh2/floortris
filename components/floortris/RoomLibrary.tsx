@@ -10,6 +10,7 @@ export const ROOM_PRESETS = [
   { id: 'bedroom-double', label: 'Double bedroom' },
   { id: 'office', label: 'Home office' },
   { id: 'bathroom', label: 'Bathroom concept' },
+  { id: 'sketch', label: 'Measured sketch' },
 ];
 export function dockVariants(profile: RoomProfile): string[] {
   if (profile.kind === 'bedroom') return [profile.sleeping === 'king' ? 'haven-king-160' : profile.sleeping === 'double' ? 'haven-double-140' : 'haven-single-100', 'nook-bedside-40', 'tallline-wardrobe-100', 'fern-40'];

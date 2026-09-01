@@ -61,7 +61,8 @@ test('history restores stale drafts as stale; human edits cannot rebase them', (
 
 test('undo invalidates cached idempotency results and checked candidates', async () => {
   const store = createStore(makeCompactRoom()), p = store.getState().proposal!;
-  const args = { proposalId: p.id, revision: p.revision, variantId: 'fern-40', idempotencyKey: 'placed-before-undo' };
+  const checked = await store.execute('findPlacements', { proposalId: p.id, revision: p.revision, variantId: 'weave-mat-80', limit: 1 });
+  const args = { proposalId: p.id, revision: p.revision, candidateId: (checked.candidates as {candidateId:string}[])[0].candidateId, idempotencyKey: 'placed-before-undo' };
   assert.equal((await store.execute('placeFurniture', args)).operationSucceeded, true);
   store.undo();
   assert.equal((await store.execute('placeFurniture', args)).operationSucceeded, false);
@@ -181,7 +182,8 @@ test('room switches refresh authority even when samples reuse IDs and revision n
 test('room switching rejects in-flight planning and clears replay and candidate caches',async()=>{
   const {makeBedroomDouble,makeHomeOffice}=await import('./samples.ts');
   const bedroom=makeBedroomDouble(), store=createStore(bedroom), p=bedroom.proposal!;
-  const placed={proposalId:p.id,revision:p.revision,variantId:'fern-40',originCell:{x:10,y:8},idempotencyKey:'old-replay'};
+  const checked=await store.execute('findPlacements',{proposalId:p.id,revision:p.revision,variantId:'fern-40',limit:1});
+  const placed={proposalId:p.id,revision:p.revision,candidateId:(checked.candidates as {candidateId:string}[])[0].candidateId,idempotencyKey:'old-replay'};
   assert.equal((await store.execute('placeFurniture',placed)).operationSucceeded,true);
   const current=store.getState().proposal!;
   const candidates=await store.execute('findPlacements',{proposalId:current.id,revision:current.revision,variantId:'fern-40',limit:1});

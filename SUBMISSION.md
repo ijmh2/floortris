@@ -35,9 +35,11 @@ identical code path into the identical rule engine. There is no second model of
 the room that the agent reasons about and the human never sees, and no way for
 the two to disagree.
 
-That is the part WebMCP makes possible and an API could not: the agent acts *on
+That is where WebMCP improves on a separate API-only workflow: the agent acts *on
 the artefact the human is already looking at*, and every consequence is rendered
-immediately, in place, for a person who can veto it.
+immediately, in place, for a person who can veto it. A conventional API could
+support the same domain logic, but would need extra synchronization and review UI
+to preserve this shared-document experience.
 
 ## How it improves the experience
 
@@ -50,6 +52,14 @@ activity zones.
 Crucially it **does not take the wheel.** The proposal never overwrites your
 room. The view never switches under you. A status chip tells you the draft is
 ready; you look when you want to. Apply is yours alone.
+
+The clearest high-impact deployment is standardized university accommodation.
+A university or accommodation provider can publish measured room shells and an
+approved inventory; students can add the exact furniture and belongings they
+own, then ask an agent for a checked, reviewable proposal before move-in. This
+reduces repetitive measurement/layout work while keeping each student's choices
+and the final Apply decision local and visible. The same pattern also applies to
+other repeatable rooms such as supported housing, rentals and small offices.
 
 ## Human and agent, sharing one document
 
@@ -65,8 +75,10 @@ The collaboration model is the design, not a feature:
   yourself mid-search and the agent's next write is refused with
   `revision_conflict` instead of clobbering you. Change your room and the draft
   goes `stale` and cannot be applied.
-- **Human-only actions.** Apply, Confirm room inputs, Discard, Unlock and
-  switching view are **not registered as tools.** An agent cannot reach them.
+- **Human-reserved actions.** Apply, Confirm room inputs, Discard, Unlock and
+  switching view are **not exposed as WebMCP tools** and are reserved for the
+  person reviewing the page. Generic browser automation is outside that WebMCP
+  capability boundary and is not presented as a security sandbox.
 - **Semantic flags, never colour.** Tools return `tv_blocked`, `path_broken`,
   `walk_tight`. Colour is a rendering decision the page makes locally.
 
@@ -110,16 +122,23 @@ Stack: TypeScript, React, Next.js on the vinext runtime, deployed as a
 Cloudflare Worker. No backend, no database, no LLM service. Room data stays in
 your browser.
 
+Saved/imported JSON is validated as a closed V1/V2 document, not cast to a
+TypeScript type: every room, rule, proposal, opening, fixture and furniture record
+is bounded; unknown fields, forged roles/revisions and dangling references are
+rejected. Corrupt browser storage is not silently replaced—the page offers an
+untouched download, recovery of individually valid rooms, or a human-confirmed
+reset while native tools and auto-save wait.
+
 ## How to test it
 
 WebMCP is behind a flag today. Use **ChatGPT's in-app browser**, or **Chrome**
 with `chrome://flags/#enable-webmcp-testing` enabled, then relaunch and open the
 live URL. The `?` button on the board reports how many native tools registered.
 
-In ChatGPT, choose **GPT-5.6 Sol** or **Terra**. **Luna cannot call WebMCP tools
-today** — on Luna nothing is invoked, which resembles a broken page but is a
-model limitation. The tools panel distinguishes them: it reports registration
-independently of whether any model chooses to call.
+Use ChatGPT's in-app browser or another compatible Chrome WebMCP runtime. Tool
+availability depends on the runtime exposing the draft API, not on a model name.
+The tools panel reports page registration independently of whether an agent
+chooses to call a tool.
 
 Without the flag the page says so plainly and every human editing feature still
 works — you simply cannot discover the tools.

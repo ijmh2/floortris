@@ -1,6 +1,6 @@
 import { faces, key, opposite, rotations, type ActivityZone, type Rotation, type BriefRequirement, type Cell, type Door, type Furniture, type GridCell, type Issue, type Layout, type Opening, type Rect, type Report, type Room, type Rules, type Wall } from './model.ts';
 import { cellInsideRoom, floorAreaM2, rectInsideRoom, resolveWallSegment, wallRect, wallSegments } from './floorplan.ts';
-import { canSupportLamp, isFloorOccupant, LIGHT_KINDS, normalizeFixturePlacement } from './fixture-placement.ts';
+import { canSupportLamp, isFloorOccupant, isWallMounted, LIGHT_KINDS, normalizeFixturePlacement } from './fixture-placement.ts';
 
 export const isSolid = (o: Furniture) => isFloorOccupant(o);
 export function bounds(o: Furniture, cellCm = 20): Rect {
@@ -179,7 +179,12 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
   for (const o of all) {
     const b = bounds(o, unit), at = masks.get(o.id)!;
     if (isFloorOccupant(o) && (b.w <= 0 || b.d <= 0)) issue('footprint_invalid', `${o.label} has no measurable footprint, so no clearance or route rule can see it. Give it a positive width and depth.`, [o.id]);
-    if ((isFloorOccupant(o) || o.kind === 'ceiling_light' || o.kind === 'table_lamp') && !rectInsideRoom(room, b)) issue('out_of_room', `${o.label} extends past the room outline. Move it inside the boundary.`, [o.id], rectCells(b, unit).filter(c => !insideKeys.has(key(c))));
+    // Everything that occupies plan area must sit inside the real outline, not
+    // merely inside the bounding box. Only wall-mounted items are exempt: they
+    // are anchored to a segment and checked against it separately. Listing the
+    // non-floor kinds by hand here missed rugs, which a custom plan then let
+    // hang over the void outside the room.
+    if (!isWallMounted(o) && !rectInsideRoom(room, b)) issue('out_of_room', `${o.label} extends past the room outline. Move it inside the boundary.`, [o.id], rectCells(b, unit).filter(c => !insideKeys.has(key(c))));
     if (o.sizeCm.h !== null && o.elevationCm + o.sizeCm.h > rules.ceilingCm) issue('ceiling_collision', `${o.label} is above the ${rules.ceilingCm} cm ceiling. Check the measured height or mount.`, [o.id]);
     if (!isSolid(o)) continue;
     for (const c of at) { const g = lookup.get(key(c)); if (!g) continue; g.objectIds.push(o.id); g.heightClass = o.sizeCm.h === null || g.heightClass === 'UNKNOWN_HEIGHT' ? 'UNKNOWN_HEIGHT' : o.sizeCm.h > rules.H_lowCm || g.heightClass === 'TALL' ? 'TALL' : 'LOW'; }
@@ -541,7 +546,7 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     }
 
     // A near miss reads as a mistake; flush or clearly away is intentional.
-    if (!isBedside && o.kind !== 'rug') {
+    if (!isBedside && o.kind !== 'rug' && o.kind !== 'table_lamp') {
       const near = (Object.keys(g) as Wall[]).filter(w => g[w] > 0 && g[w] <= 25).sort((a, c) => g[a] - g[c])[0];
       if (near) issue('prefer_flush_to_wall', `${o.label} sits ${Math.round(g[near])} cm from the ${near} wall — close enough to look unintended.`, [o.id], [], 'warning', [], room.floorPlan ? { tool: 'findPlacements', args: { objectId: o.id }, summary: `Find a checked flush placement on a ${near}-facing segment` } : moveFix(o, near === 'west' ? 0 : near === 'east' ? room.widthCm - b.w : b.x, near === 'north' ? 0 : near === 'south' ? room.depthCm - b.d : b.y, `Push flush to the ${near} wall`));
     }

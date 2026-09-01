@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readImportedRoom, readSavedRoom } from './persistence.ts';
+import { inspectStoredRoom, readImportedRoom, readSavedRoom, resetDamagedStorage, restoreRecoveredRooms } from './persistence.ts';
 import { makeBedroomDouble, makeBedroomSingle, makeHomeOffice, makeBathroomConcept, makeCompactRoom } from './samples.ts';
 import { createStore } from './store.ts';
 import { CATALOGUE, fromVariant } from './data.ts';
@@ -91,4 +91,19 @@ test('room workspace saves old drafts and new rooms atomically, reloads active a
   data.set('legacy.workspace','broken');
   assert.throws(()=>saveWorkspaceRoom(storage,'legacy',generated,original));
   assert.equal(data.get('legacy.workspace'),'broken');
+});
+
+test('corrupt storage is preserved for explicit export/recover/reset choices', () => {
+  const data=new Map<string,string>(), storage={getItem:(key:string)=>data.get(key)||null,setItem:(key:string,value:string)=>{data.set(key,value);},removeItem:(key:string)=>{data.delete(key);}};
+  const valid=makeCompactRoom(), workspaceKey='rooms.workspace';
+  data.set(workspaceKey,JSON.stringify({version:1,activeId:'original',documents:[{id:'original',state:valid},{id:'forged',state:{version:99}}],futureField:'reject'}));
+  const loaded=inspectStoredRoom(storage,'rooms');
+  assert.equal(loaded.state,null);assert.ok(loaded.recovery);assert.equal(data.has(workspaceKey),true,'inspection never mutates source');
+  assert.deepEqual(loaded.recovery!.untouched,[{key:workspaceKey,raw:data.get(workspaceKey)!}]);
+  assert.equal(loaded.recovery!.validDocuments.length,1);
+  const recovered=restoreRecoveredRooms(storage,loaded.recovery!);assert.equal(recovered?.documents.length,1);assert.equal(recovered?.activeId,'original');
+  assert.deepEqual(inspectStoredRoom(storage,'rooms').state,valid);
+
+  data.set(workspaceKey,'not json');const damaged=inspectStoredRoom(storage,'rooms').recovery!;
+  assert.equal(data.get(workspaceKey),'not json');resetDamagedStorage(storage,damaged);assert.equal(data.has(workspaceKey),false);
 });

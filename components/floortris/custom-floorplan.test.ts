@@ -72,3 +72,24 @@ test('an agent can generate, read and persist an L-shaped proposal; ambiguous cu
   assert.equal(invalid.operationSucceeded, false); assert.equal(invalid.error?.code, 'invalid_room_inputs');
   assert.deepEqual(rejectedStore.getState(), prior);
 });
+
+test('a rug hanging over the void outside a custom outline is reported', () => {
+  // Regression: the outline check listed the non-floor kinds it cared about by
+  // hand and missed rugs, so a rug could lie across the cut-away corner of a
+  // custom plan and the engine saw nothing. The planner then actually did it.
+  const room = { name: 'L', widthCm: 500, depthCm: 500, floorPlan: lPlan, openings: [], fixtures: [] } as unknown as Room;
+  const layout = (originCell: { x: number; y: number }): Layout => {
+    const rug = fromVariant('weave-rug-200', 'rug'); rug.originCell = originCell;
+    return { furniture: [rug], appearance: { wall: 'chalk', floor: 'ash' } } as Layout;
+  };
+  const outside = layout({ x: 14, y: 14 });
+  assert.equal(rectInsideRoom(room, bounds(outside.furniture[0], 20)), false, 'fixture check: this rug really is outside the outline');
+  const flagged = validate(outside, room, DEFAULT_RULES, []).issues.find(i => i.code === 'out_of_room');
+  assert.ok(flagged, 'a rug outside the outline must be reported');
+  assert.equal(flagged!.severity, 'block');
+  assert.deepEqual(flagged!.objectIds, ['rug']);
+
+  const inside = layout({ x: 0, y: 0 });
+  assert.equal(rectInsideRoom(room, bounds(inside.furniture[0], 20)), true);
+  assert.equal(validate(inside, room, DEFAULT_RULES, []).issues.some(i => i.code === 'out_of_room'), false, 'a rug inside the outline stays silent');
+});

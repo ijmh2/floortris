@@ -1,4 +1,11 @@
-# Floortris — audit against FLOORTRIS-SPEC.md
+# Archived Floortris acceptance audit — historical snapshot
+
+> **Archived:** this file describes an earlier 15-tool build and is retained only
+> for provenance. It is not current release evidence. The current surface has 16
+> native tools, including `createCustomFurniture`; use [JUDGE-QUICKSTART.md](./JUDGE-QUICKSTART.md),
+> `npm test`, `npm run typecheck`, `npm run lint`, `npm run build`, and
+> `npm run test:native -- <URL>` for current, derived evidence. Do not rely on the
+> historical test counts or model-specific runtime notes below.
 
 27 August 2026. Source of truth for rules: `FLOORTRIS-SPEC.md` (Downloads copy and
 `../FLOORTRIS-SPEC.md` are identical). Code audited: `components/floortris/`.

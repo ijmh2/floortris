@@ -1,3 +1,4 @@
+import { normalizeFixturePlacement } from './fixture-placement.ts';
 import { fromVariant, makeDemo } from './data.ts';
 import { clone, type AppState, type FixedFixture, type RoomProfile } from './model.ts';
 
@@ -81,6 +82,44 @@ export function makeBathroomConcept(): AppState {
 }
 
 /** Fixed allowlist: every sample has its own local document and starts as a proposal. */
+/** The measured plan sketched by hand: a 6 x 6 m envelope with a bay off the
+ *  top wall and two corners cut away, 24 m2 of floor. Segment ids follow point
+ *  order, so the door sits on wall-7 and the windows on wall-1 and wall-5. */
+export function makeSketchRoom(): AppState {
+  const state = blank('Measured sketch', 600, 600, { kind: 'lounge' });
+  state.room.floorPlan = { kind: 'rectilinear', points: [
+    { xCm: 100, yCm: 0 }, { xCm: 300, yCm: 0 }, { xCm: 300, yCm: 100 }, { xCm: 600, yCm: 100 },
+    { xCm: 600, yCm: 400 }, { xCm: 200, yCm: 400 }, { xCm: 200, yCm: 600 }, { xCm: 0, yCm: 600 },
+    { xCm: 0, yCm: 100 }, { xCm: 100, yCm: 100 },
+  ] };
+  state.room.openings = [
+    { id: 'entrance', kind: 'door', wall: 'south', segmentId: 'wall-7', offsetCm: 20, widthCm: 100, hinge: 'start', swing: 'in', angle: 90, mechanism: 'hinged', entrance: true },
+    { id: 'window-bay', kind: 'window', wall: 'north', segmentId: 'wall-1', offsetCm: 0, widthCm: 200, sillCm: 90, headCm: 210, type: 'fixed', windowAccess: false },
+    { id: 'window-return', kind: 'window', wall: 'south', segmentId: 'wall-5', offsetCm: 100, widthCm: 200, sillCm: 90, headCm: 210, type: 'fixed', windowAccess: false },
+  ];
+  // Furnished so the sample opens as a room, not an outline. Fixtures carry the
+  // relationships the engine checks — the TV names its sofa, the curtains and
+  // blind name their openings, each lamp names what it stands on — and are then
+  // put through the product's own placement normaliser rather than hand-placed.
+  const rug = fromVariant('weave-rug-200', 'sketch-rug'); rug.originCell = { x: 19, y: 11 };
+  const sofa = fromVariant('arc-sofa-200', 'sketch-sofa'); sofa.originCell = { x: 19, y: 9 }; sofa.rotation = 270;
+  const table = fromVariant('pebble-table-80', 'sketch-table'); table.originCell = { x: 25, y: 13 };
+  const side = fromVariant('pebble-side-45', 'sketch-side'); side.originCell = { x: 16, y: 9 };
+  const desk = fromVariant('line-desk-100', 'sketch-desk'); desk.originCell = { x: 8, y: 1 };
+  state.current.furniture = [rug, sofa, table, side, desk];
+
+  const tv = fromVariant('frame-tv-120', 'sketch-tv'); tv.wallAnchor = { wall: 'east', segmentId: 'wall-4', offsetCm: 120 }; tv.targetSofaId = sofa.id;
+  const curtains = fromVariant('soft-curtains-160', 'sketch-curtains'); curtains.attachedOpeningId = 'window-bay';
+  const blind = fromVariant('line-blind-160', 'sketch-blind'); blind.attachedOpeningId = 'window-return';
+  const ceiling = fromVariant('halo-flush-35', 'sketch-ceiling'); ceiling.originCell = { x: 12, y: 8 };
+  const deskLamp = fromVariant('nook-table-lamp-28', 'sketch-desk-lamp'); deskLamp.supportObjectId = desk.id;
+  const sofaLamp = fromVariant('nook-table-lamp-28', 'sketch-sofa-lamp'); sofaLamp.supportObjectId = side.id;
+  const wallLight = fromVariant('arc-wall-light-24', 'sketch-wall-light'); wallLight.wallAnchor = { wall: 'east', segmentId: 'wall-4', offsetCm: 240 };
+  for (const fixture of [tv, curtains, blind, ceiling, deskLamp, sofaLamp, wallLight]) state.current.furniture.push(normalizeFixturePlacement(fixture, state.room, state.rules, state.current, !!fixture.supportObjectId));
+
+  return state;
+}
+
 export function roomSession(search: string) {
   const sample = new URLSearchParams(search).get('sample') || 'local';
   const sessions: Record<string, { storageKey: string; makeInitial: () => AppState }> = {
@@ -89,6 +128,7 @@ export function roomSession(search: string) {
     'bedroom-double': { storageKey: 'floortris.v2.sample.bedroom-double', makeInitial: makeBedroomDouble },
     office: { storageKey: 'floortris.v2.sample.office', makeInitial: makeHomeOffice },
     bathroom: { storageKey: 'floortris.v2.sample.bathroom', makeInitial: makeBathroomConcept },
+    sketch: { storageKey: 'floortris.v4.sample.sketch', makeInitial: makeSketchRoom },
     local: { storageKey: 'floortris.v1.local', makeInitial: makeDemo },
   };
   return { compact: sample === '3m', sample, ...(sessions[sample] || sessions.local) };

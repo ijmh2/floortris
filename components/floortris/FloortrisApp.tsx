@@ -2,11 +2,12 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import { CATALOGUE, formFor, PALETTES } from './data.ts';
 import { FORM_PARTS, FORM_LABEL } from './forms.ts';
 import { roomSession } from './samples.ts';
-import { documentId, loadWorkspaceRoom, readImportedRoom, readWorkspace, saveWorkspaceRoom } from './persistence.ts';
+import { documentId, inspectStoredRoom, loadWorkspaceRoom, readImportedRoom, readWorkspace, resetDamagedStorage, restoreRecoveredRooms, saveWorkspaceRoom, type StoredRoomRecovery } from './persistence.ts';
 import { bounds, validate, wallBand } from './sectional-engine.ts';
 import { faces, type AppState, type Candidate, type CommandResult, type Furniture, type Issue, type Layout, type Report, type Room, type Rules, type Rotation, type Cell } from './model.ts';
 import { createStore, proposalStatus, type FloortrisStore } from './store.ts';
 import { registerFloortrisTools, type WebMCPState } from './webmcp.ts';
+import { createIosBridge } from './ios-bridge.ts';
 import './floortris.css';
 import './room3d.css';
 import './finishes.css';
@@ -64,9 +65,12 @@ const issueName = (issue: Pick<Issue, 'code'>) => issueNames[issue.code] || nice
 const palette = (id: string) => PALETTES.furniture.find(p => p.id === id)?.color || '#c9c5b9';
 function Chevron({ open = false }: { open?: boolean }) { return <svg className={`ft-menu-chevron${open ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>; }
 function HistoryIcon({ forward = false }: { forward?: boolean }) { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={forward ? 'm15 7 5 5-5 5M20 12H9a5 5 0 0 0-5 5' : 'm9 7-5 5 5 5M4 12h11a5 5 0 0 1 5 5'} /></svg>; }
-function loadState(session: ReturnType<typeof roomSession>): AppState {
-  try { const saved = loadWorkspaceRoom(localStorage, session.storageKey, new URLSearchParams(window.location.search).get('room')); if (saved) return saved; } catch { /* Storage may be unavailable in private browsing. */ }
-  return session.makeInitial();
+function loadState(session: ReturnType<typeof roomSession>): { state: AppState; recovery: StoredRoomRecovery | null } {
+  try {
+    const loaded = inspectStoredRoom(localStorage, session.storageKey, new URLSearchParams(window.location.search).get('room'));
+    return { state: loaded.state || session.makeInitial(), recovery: loaded.recovery };
+  } catch { /* Storage may be unavailable in private browsing. */ }
+  return { state: session.makeInitial(), recovery: null };
 }
 /** The URL mirrors the open sample library and room; it never drives navigation. */
 function syncSampleUrl(sample: string, roomId?: string) {
@@ -231,7 +235,9 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
   // Each sample library owns its storage key, and the URL mirrors which one is open.
   // Reading it back here lets a single store — and a single set of native tool
   // registrations — serve every room, with no page load when the human switches.
-  const [store] = useState(() => suppliedStore || createStore(typeof window === 'undefined' ? session.makeInitial() : loadState(session), { beforeNewDocument: (previous, next) => { saveWorkspaceRoom(localStorage, roomSession(window.location.search).storageKey, next, previous); } }));
+  const [initialLoad] = useState(() => typeof window === 'undefined' ? { state: session.makeInitial(), recovery: null } : loadState(session));
+  const [store] = useState(() => suppliedStore || createStore(initialLoad.state, { beforeNewDocument: (previous, next) => { saveWorkspaceRoom(localStorage, roomSession(window.location.search).storageKey, next, previous); } }));
+  const [storageRecovery, setStorageRecovery] = useState<StoredRoomRecovery | null>(() => suppliedStore ? null : initialLoad.recovery);
   const [state, setState] = useState(store.getState());
   const [view, setView] = useState<View>(() => (store.getState().documentId || !['local','3m'].includes(session.sample)) && store.getState().proposal ? 'proposal' : 'current');
   const [savedRooms, setSavedRooms] = useState<{id:string;name:string}[]>([]);
@@ -248,7 +254,7 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [busy, setBusy] = useState(false), [suggestions, setSuggestions] = useState<Candidate[]>([]);
   const [review, setReview] = useState<{ id: string; revision: number } | null>(null);
-  const [webmcp, setWebmcp] = useState<WebMCPState>({ state: 'checking', count: 0, message: 'Checking native tools…' });
+  const [webmcp, setWebmcp] = useState<WebMCPState>({ state: 'checking', count: 0, message: initialLoad.recovery ? 'Resolve saved-room recovery before native tools are registered.' : 'Checking native tools…' });
   const [ownedForm, setOwnedForm] = useState({ label: 'My armchair', kind: 'chair', w: 80, d: 80, h: 85, sleepSize: 'single' as 'single' | 'double' | 'king', storageRole:'general' as 'wardrobe'|'bedside'|'general' });
   const abort = useRef<AbortController | null>(null);
   const importInput = useRef<HTMLInputElement | null>(null);
@@ -256,19 +262,30 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
   const [railOpen, setRailOpen] = useState(false);
   const [toolTick, setToolTick] = useState(0);
   useEffect(() => store.subscribe(() => { setState(store.getState()); setSuggestions([]); setToolTick(t => t + 1); }), [store]);
+  // Expose iOS bridge once store is ready. The WKUserScript listens for the
+  // 'floortrisBridgeReady' event and then notifies Swift to send the ScanResult.
+  useEffect(() => {
+    createIosBridge(store);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return () => { delete (window as any).__floortrisBridge; };
+  }, [store]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toolTick is the deliberate re-read trigger for the store's mutable tool log.
   const toolLog = useMemo(() => store.getToolLog().slice(0, 12), [store, toolTick]);
   useEffect(() => {
+    if (storageRecovery) return;
     try {
       const workspace = saveWorkspaceRoom(localStorage, session.storageKey, state);
       queueMicrotask(() => { setSavedRooms(workspace.documents.map(d => ({ id: d.id, name: d.state.room.name }))); setSaveFailed(false); });
       syncSampleUrl(session.sample, documentId(state));
     } catch { queueMicrotask(() => { setSaveFailed(true); setNotice({ text: 'Local saving unavailable. Export your room before closing.', error: true }); }); }
-  }, [state, session]);
-  useEffect(() => registerFloortrisTools(store, setWebmcp, document, result => {
+  }, [state, session, storageRecovery]);
+  useEffect(() => {
+    if (storageRecovery) return;
+    return registerFloortrisTools(store, setWebmcp, document, result => {
     if (result.operationSucceeded && result.generatedRoom) { setView('proposal'); setSelected(null); setPanel(null); setReview(null); setShowSetup(false); setFocusCells([]); setMode('furniture'); setNotice({ text: String(result.message), error: false }); }
     if ((result.issues as {code:string}[] | undefined)?.some(i => i.code === 'tv_blocked' || i.code === 'tv_unknown')) { setTvFlash(Date.now()); setTvBadge(true); }
-  }), [store]);
+    });
+  }, [store, storageRecovery]);
   useEffect(() => { if (!tvFlash) return; const timer = setTimeout(() => setTvFlash(0), 2000); return () => clearTimeout(timer); }, [tvFlash]);
   useEffect(() => () => abort.current?.abort(), []);
   useEffect(() => {
@@ -390,6 +407,26 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
   const accept = async (c: Candidate) => onResult(await store.execute('updateFurniture', { proposalId: c.proposalId, revision: c.proposalRevision, objectId: c.objectId, candidateId: c.candidateId }));
   const discard = () => { if (window.confirm('Discard this proposal? Yours stays unchanged.')) { abort.current?.abort(); store.discardProposal(); changeView('current'); setReview(null); } };
   const exportRoom = () => { const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })), link = document.createElement('a'); link.href = url; link.download = 'floortris-room.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+  const exportDamagedStorage = () => {
+    if (!storageRecovery) return;
+    const backup = { exportedAt: new Date().toISOString(), storage: Object.fromEntries(storageRecovery.untouched.map(entry => [entry.key, entry.raw])) };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' })), link = document.createElement('a');
+    link.href = url; link.download = 'floortris-recovery-backup.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const recoverValidRooms = () => {
+    if (!storageRecovery) return;
+    try {
+      const workspace = restoreRecoveredRooms(localStorage, storageRecovery);
+      if (!workspace) throw new Error('No valid rooms');
+      const result = store.humanOpenRoom(workspace.documents[0].state); onResult(result);
+      if (result.operationSucceeded) { setStorageRecovery(null); setSavedRooms(workspace.documents.map(entry => ({ id: entry.id, name: entry.state.room.name }))); }
+    } catch { setNotice({ text: 'Recovery could not be saved. Download the untouched data before resetting.', error: true }); }
+  };
+  const resetDamagedRooms = () => {
+    if (!storageRecovery || !window.confirm('Remove only the damaged saved data and start from this sample? Download it first if you may need it later.')) return;
+    try { resetDamagedStorage(localStorage, storageRecovery); setStorageRecovery(null); store.resetDemo(session.makeInitial()); setNotice({ text: 'Damaged saved data removed after your confirmation.', error: false }); }
+    catch { setNotice({ text: 'The browser would not remove the damaged saved data. Download it before trying again.', error: true }); }
+  };
   const importRoom = async (file: File | undefined) => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.json') || file.size > 1_000_000) { setNotice({ text: 'Choose a Floortris JSON export smaller than 1 MB.', error: true }); return; }
@@ -417,7 +454,7 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
   const roomMeta = `${room.name.toLowerCase().includes(profileName) ? '' : `${profileLabel} · `}${fmt(floorAreaM2(room))} m²${room.floorPlan ? ' · custom outline' : ''}`;
   // A modal owns the screen: the rest of the app leaves the tab order and the
   // accessibility tree, so a trap is not the only thing holding focus in.
-  const modalOpen = showSetup || review !== null;
+  const modalOpen = showSetup || review !== null || storageRecovery !== null;
   return <div className="ft-app ft-overhaul">
     <header className="ft-header" inert={modalOpen}>
       <Brand />
@@ -435,7 +472,7 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
               : dockVariants(profile).map(id => { const v = CATALOGUE.find(v => v.id === id)!; return <button key={id} className="ft-dock-piece" {...dockProps(id)} disabled={!editable} onClick={() => add(id)} title={`Add ${v.name}`}><span className="ft-dock-shape"><Shape item={{kind:v.kind, appearance:v.palette, variantId:v.id}} small /></span><span>{v.kind === 'tv' ? 'TV' : v.kind === 'coffee_table' ? 'Table' : v.tags?.includes('bedside') ? 'Bedside' : v.tags?.includes('wardrobe') ? 'Wardrobe' : nice(v.kind)}</span></button>; })}<span className="ft-dock-hint">{dimension==='3d'?'Add a piece to place it in 2D':'Drag a piece onto the grid'}</span>{profile.kind==='bathroom_concept' && <button className="ft-button ft-secondary" onClick={()=>setShowSetup(true)}>Edit fixtures ↗</button>}</nav>
       {previewVariant && dimension==='2d' && panel!=='pieces' && <VariantPreview variant={CATALOGUE.find(v=>v.id===previewVariant)!} rules={rules}/>}
       <section className="ft-canvas-panel" aria-label="Room planning workspace">
-        <div className="ft-board-chrome"><div className="ft-view-tabs" role="group" aria-label="Layout view">{(['current', 'proposal', 'compare'] as View[]).map(v => <button key={v} aria-pressed={view === v} className={view === v ? 'active' : ''} onClick={() => changeView(v)} disabled={v !== 'current' && !active}>{v === 'current' ? 'Yours' : v === 'proposal' ? 'Proposal' : 'Compare'}</button>)}</div><div className="ft-chrome-right"><div className="ft-dimension-tabs" role="group" aria-label="Room dimension view">{(['2d','3d'] as const).map(d=><button key={d} aria-pressed={dimension===d} onClick={()=>{setDimension(d);setDraggedVariant(null);}}>{d==='2d'?'2D':'3D'}</button>)}</div><button className={`ft-tools-chip ${webmcp.state === 'registered' ? 'ft-tools-ready' : ''}`} onClick={() => togglePanel('tools')}><span aria-hidden="true">●</span> {webmcp.state === 'registered' ? `WebMCP · ${webmcp.count} registered` : webmcp.state === 'checking' ? 'WebMCP · checking…' : 'WebMCP unavailable'}</button></div></div>
+        <div className="ft-board-chrome"><div className="ft-view-tabs" role="group" aria-label="Layout view">{(['current', 'proposal', 'compare'] as View[]).map(v => <button key={v} aria-pressed={view === v} className={view === v ? 'active' : ''} onClick={() => changeView(v)} disabled={v !== 'current' && !active}>{v === 'current' ? 'Yours' : v === 'proposal' ? 'Proposal' : 'Compare'}</button>)}</div><div className="ft-chrome-right"><div className="ft-dimension-tabs" role="group" aria-label="Room dimension view">{(['2d','3d'] as const).map(d=><button key={d} aria-pressed={dimension===d} onClick={()=>{setDimension(d);setDraggedVariant(null);}}>{d==='2d'?'2D':'3D'}</button>)}</div><button title={webmcp.message} className={`ft-tools-chip ${webmcp.state === 'registered' ? 'ft-tools-ready' : ''}`} onClick={() => togglePanel('tools')}><span aria-hidden="true">●</span> {webmcp.state === 'registered' ? `WebMCP · ${webmcp.count} registered` : webmcp.state === 'checking' ? 'WebMCP · checking…' : 'WebMCP unavailable'}</button></div></div>
         <div className={`ft-proposal-row ft-status-${status}`} aria-live="polite"><div className="ft-proposal-message"><strong>{active ? active.kind === 'setup' ? 'Room inputs · awaiting confirmation' : `Proposal · ${status === 'ready_for_review' ? 'ready' : status}` : 'Your room. Another possibility.'}</strong><span>{status === 'stale' ? 'Yours changed. Discard this draft to start again.' : blocking ? `${repairItem?.label || 'Layout'} · ${issueName(blocking)}` : active ? `Revision ${active.revision} · Yours stays unchanged until Apply` : 'Let the planner arrange pieces around your locks.'}</span></div><div className="ft-proposal-actions">{busy ? <button className="ft-button ft-secondary" onClick={() => abort.current?.abort()}>Cancel search</button> : <button className="ft-button ft-secondary" onClick={plan} disabled={status === 'stale' || active?.kind === 'setup'} title={active ? 'Re-run the planner over this draft. It keeps your locked pieces, and an unchanged draft plans to the same arrangement.' : 'Run the bounded local planner on a new draft. Yours stays unchanged.'}>{active ? 'Re-plan draft' : 'Try a proposal'}</button>}{active && <><button className="ft-button ft-secondary" onClick={() => active.kind === 'setup' ? (setPanel(null), setSelected(null), setShowSetup(true)) : changeView('proposal')}>View</button><button className="ft-button ft-primary" disabled={status !== 'ready_for_review' || active.kind !== 'layout'} onClick={() => setReview({ id: active.id, revision: active.revision })}>Apply</button><button className="ft-button ft-secondary" onClick={discard}>Discard</button></>}{status === 'blocked' && repairItem && <button className="ft-button ft-primary" disabled={busy} onClick={() => find(repairItem.id)}>Find placements</button>}</div></div>
         <div className="ft-overlay-toolbar">{dimension === '3d' ? <div className="ft-3d-guidance"><span><strong>3D preview</strong><small>Drag to orbit · scroll or pinch to zoom. Checks use the measured 2D plan.</small></span><button type="button" onClick={() => setDimension('2d')}>Edit in 2D</button></div> : <div role="group" aria-label="Board overlay" className="ft-mode-tabs">{(['furniture','height','walk','tv','doors'] as OverlayMode[]).filter(m=>m!=='tv'||showTv).map(m => <button key={m} aria-pressed={mode === m} onClick={() => { setMode(m); setTvFlash(0); if(m==='tv')setTvBadge(false); }} className={(tvFlash?'tv':mode) === m ? 'active' : ''}>{m === 'tv' ? `TV${tvBadge?' !':''}` : m[0].toUpperCase() + m.slice(1)}</button>)}</div>}<div className="ft-health-flags" role="group" aria-label="Room checks"><span className="ft-health-title">Room checks</span>{(['path','tv','door'] as const).filter(f=>f!=='tv'||showTv).map(f => { const health = flagState(f); return <button key={f} className={`ft-health-${health}`} onClick={() => { setDimension('2d'); setMode(f === 'path' ? 'walk' : f === 'door' ? 'doors' : 'tv'); setPanel('check'); setSelected(null); }}><span aria-hidden="true">{health === 'clear' ? '✓' : health === 'missing' ? '○' : '!'}</span><span>{f === 'tv' ? 'TV' : f[0].toUpperCase() + f.slice(1)}</span><small>{health}</small></button>; })}</div></div>
         {report.conceptualOnly && <p className="ft-concept-banner"><strong>Bathroom concept · fixed fixtures</strong> Spatial layout only. No plumbing, electrics, waterproofing, ventilation, installation or safety assessment.</p>}
@@ -465,6 +502,7 @@ function FloortrisWorkspace({ store: suppliedStore }: { store?: FloortrisStore }
     </main>
     {notice && <div className={`ft-toast ${notice.error?'ft-toast-error':''}`} role={notice.error?'alert':'status'}><span className="ft-toast-icon" aria-hidden="true">{notice.error?'!':'✓'}</span><p>{notice.text}</p><button onClick={()=>setNotice(null)} aria-label="Dismiss notice"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg></button></div>}
     {showSetup && <RoomEditor state={state} store={store} onResult={onResult} close={()=>setShowSetup(false)}/>}
+    {storageRecovery && <div className="ft-modal-backdrop"><section className="ft-modal" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title" aria-describedby="recovery-description"><h2 id="recovery-title">Saved rooms need attention</h2><p id="recovery-description">{storageRecovery.message} Download the untouched browser data before choosing recovery or reset if you may need a manual backup.</p>{storageRecovery.validDocuments.length > 0 && <p><strong>{storageRecovery.validDocuments.length} valid {storageRecovery.validDocuments.length === 1 ? 'room was' : 'rooms were'} found inside the saved data.</strong></p>}<div className="ft-modal-actions"><button className="ft-button ft-secondary" onClick={exportDamagedStorage}>Download untouched data</button>{storageRecovery.validDocuments.length > 0 && <button className="ft-button ft-primary" onClick={recoverValidRooms}>Recover valid rooms</button>}<button className="ft-button ft-secondary" onClick={resetDamagedRooms}>Reset damaged data</button></div><p className="ft-muted">Nothing is deleted until you choose Reset. Native agent tools wait while this recovery decision is open.</p></section></div>}
     {review && <div className="ft-modal-backdrop"><section ref={reviewModal} tabIndex={-1} className="ft-modal" role="dialog" aria-modal="true" aria-labelledby="review-title"><h2 id="review-title">Make this arrangement yours?</h2><p>Human confirmation only. Agents should leave this proposal for you to review. Apply proposal revision {review.revision}. Yours will be replaced. The exact revision and all hard rules are checked again.</p><div className="ft-modal-actions"><button className="ft-button ft-secondary" onClick={()=>{setReview(null);changeView('compare');}}>Compare first</button><button className="ft-button ft-primary" onClick={()=>{const r=store.applyProposal(review.id,review.revision);onResult(r);if(r.operationSucceeded){setReview(null);changeView('current');}}}>Apply revision {review.revision}</button></div><button className="ft-text-button" onClick={()=>setReview(null)}>Cancel</button></section></div>}
   </div>;
 }
