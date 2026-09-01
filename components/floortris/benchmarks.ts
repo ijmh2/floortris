@@ -48,6 +48,7 @@ const narrowBedroom = () => {
 };
 const accessibleStudio = () => {
   const state=base('accessible-studio','Benchmark · accessible studio',620,540,{kind:'bedroom',sleeping:'single',workspace:true,storage:true,bedsideQuantity:0}); state.rules.requiredKinds=['bed','desk','chair','storage'];
+  state.rules.accessibility={id:'wheelchair-planning-150',enabled:true,turningCircleCm:150,routeWidthCm:90,doorApproachDepthCm:120,bedTransferCm:90,deskApproachCm:90,reachableStorageMaxCm:140,maxProjectionCm:10};
   state.room.openings=[{...entrance('south',240),widthCm:100}];
   const bed=fromVariant('haven-single-100','accessible-bed');bed.originCell={x:2,y:1};
   return draft(state,[bed]);

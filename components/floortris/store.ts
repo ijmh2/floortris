@@ -9,6 +9,7 @@ import { anchorForDirection, rectInsideRoom, resolveWallSegment, wallRect, wallS
 import { canSupportLamp, isFloorOccupant, LIGHT_KINDS, normalizeFixturePlacement } from './fixture-placement.ts';
 import { makeCustomFurniture } from './custom-furniture.ts';
 import { sectionalGeometryError } from './sectional.ts';
+import { productForVariant, variantApprovedForRoom } from './provider-catalogues.ts';
 
 // All commands are checked against strict recursive schemas before this dispatcher reads dynamic keys.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema-validated JSON dispatch boundary; authoritative domain records remain strongly typed.
@@ -162,6 +163,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   async function search(p: Proposal, a: Args, signal?: AbortSignal, timeLimit = 1800): Promise<{ found: Candidate[]; trials: number; exhausted: boolean }> {
     const existing = a.objectId ? p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Object not found in this proposal.') : undefined;
     if (!existing && !a.variantId) fail('invalid_arguments', 'Supply objectId or variantId.');
+    if (a.variantId && !variantApprovedForRoom(p.room, a.variantId)) fail('provider_restriction', 'That product is not in this accommodation pack’s approved measured inventory.');
     let piece = existing ? clone(existing) : fromVariant(a.variantId, '__candidate__');
     if (existing && a.variantId) piece = checkPatch(existing, { variantId: a.variantId }, p.layout, p.room, p.rules);
     if (piece.kind === 'chair' && a.linkedDeskId) piece.linkedDeskId = a.linkedDeskId;
@@ -308,11 +310,11 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       let result: CommandResult;
       if (name === 'listCatalogue') {
         const list = CATALOGUE.filter(v => (!a.kind || v.kind === a.kind) && (!a.profile || !v.recommendedProfiles || v.recommendedProfiles.includes(a.profile)) && (!a.tag || v.tags?.includes(a.tag))), offset = a.offset || 0, limit = a.limit || 50;
-        return { operationSucceeded: true, catalogue: clone(list.slice(offset, offset + limit)), total: list.length, offset, hasMore: offset + limit < list.length, palettes: clone(PALETTES) };
+        return { operationSucceeded: true, catalogue: clone(list.slice(offset, offset + limit).map(variant => ({ ...variant, approvedForActiveRoom: variantApprovedForRoom(state.room,variant.id), providerProduct: productForVariant(variant.id) }))), total: list.length, offset, hasMore: offset + limit < list.length, palettes: clone(PALETTES) };
       }
       if (['getRoomState', 'listFurniture', 'checkLayout'].includes(name)) {
         const snap = snapshot(a); let report = validate(snap.layout, snap.room, snap.rules, state.inventory); if (a.candidateId) { const c = candidates.get(a.candidateId) || fail('revision_conflict','Candidate is stale or unavailable.'); if (a.which !== 'proposal' || c.proposalRevision !== snap.revision || c.ruleRevision !== state.ruleRevision) fail('revision_conflict','Candidate revision differs from the inspected draft.'); report = candidateReports.get(a.candidateId) || fail('revision_conflict','Candidate detail is no longer available.'); } const common = { operationSucceeded: true, documentId: documentId(state), which: snap.which, revision: snap.revision, currentRevision: state.currentRevision, ruleRevision: state.ruleRevision, proposalId: state.proposal?.id, status: proposalStatus(state), profile: snap.room.profile || { kind: 'lounge' }, conceptualOnly: report.conceptualOnly || false };
-        if (name === 'getRoomState') return clone({ ...common, room: snap.room, wallSegments: wallSegments(snap.room), appearance: snap.layout.appearance, profile: snap.room.profile || { kind: 'lounge' }, profileRequirements: report.brief.requirements || [], conceptualOnly: report.conceptualOnly || false, rules: snap.rules, coordinates: { origin: 'top-left', x: 'east', y: 'south', cellCm: 20, geometryUnit: 'cm', customWallOffsets: 'from each segment’s normalized top/left endpoint' }, validation: report.validation, brief: report.brief, clearances: report.clearances, flagsSummary: report.flagsSummary, proposalKind: state.proposal?.kind, assumptions: 'Product assumptions only; bathroom concepts do not validate installation, regulations or safety.' });
+        if (name === 'getRoomState') return clone({ ...common, room: snap.room, wallSegments: wallSegments(snap.room), appearance: snap.layout.appearance, profile: snap.room.profile || { kind: 'lounge' }, profileRequirements: report.brief.requirements || [], conceptualOnly: report.conceptualOnly || false, rules: snap.rules, measurementContext: snap.room.measurementContext, accommodation: snap.room.accommodation, coordinates: { origin: 'top-left', x: 'east', y: 'south', cellCm: 20, geometryUnit: 'cm', customWallOffsets: 'from each segment’s normalized top/left endpoint' }, validation: report.validation, brief: report.brief, clearances: report.clearances, flagsSummary: report.flagsSummary, proposalKind: state.proposal?.kind, assumptions: 'Product and accessibility checks are planning assistance only; bathroom concepts do not validate installation, regulations or safety.' });
         if (name === 'listFurniture') { const list = [...snap.room.fixtures, ...snap.layout.furniture], offset = a.offset || 0, limit = a.limit || 30; return clone({ ...common, furniture: list.slice(offset, offset + limit), total: list.length, offset, hasMore: offset + limit < list.length, ownedInventory: state.inventory }); }
         const inRegion = (c: { x: number; y: number }) => !a.region || (c.x >= a.region.x && c.y >= a.region.y && c.x < a.region.x + a.region.w && c.y < a.region.y + a.region.d);
         const entries = a.detail === 'flags' ? report.cells.filter(c => inRegion(c) && (!a.objectId || c.objectIds.includes(a.objectId)) && (!a.ruleCode || c.flags.includes(a.ruleCode))) : report.issues.filter(i => (!a.ruleCode || i.code === a.ruleCode) && (!a.objectId || i.objectIds.includes(a.objectId)) && (!a.region || i.cells.some(inRegion))).map(i => presentIssue(i, a.which === 'proposal' && !a.candidateId ? state.proposal : null, 60));
@@ -326,7 +328,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           const previous = state, id = `room-${crypto.randomUUID()}`;
           const appearance = { wall: a.appearance?.wall || 'warm', floor: a.appearance?.floor || 'oak' };
           for (const [target, value] of Object.entries(a.appearance || {})) if (!PALETTES[target as keyof typeof PALETTES].some(p => p.id === value)) fail('invalid_palette', `Unknown ${target} palette. Read listCatalogue for valid IDs.`);
-          const room: Room = { name: a.name, widthCm: a.widthCm, depthCm: a.depthCm, ...(a.floorPlan ? { floorPlan: clone(a.floorPlan) } : {}), profile: clone(a.profile), openings: clone(a.openings), fixtures: [] };
+          const room: Room = { name: a.name, widthCm: a.widthCm, depthCm: a.depthCm, ...(a.floorPlan ? { floorPlan: clone(a.floorPlan) } : {}), profile: clone(a.profile), openings: clone(a.openings), fixtures: [], ...(a.measurementContext ? { measurementContext: clone(a.measurementContext) } : {}) };
           const rules: Rules = { ...clone(DEFAULT_RULES), requiredKinds: [...profileRules(a.profile)] as Rules['requiredKinds'] };
           const inputError = validateRoomInputs(room, rules); if (inputError) fail('invalid_room_inputs', inputError);
           const layout: Layout = { furniture: [], appearance };
@@ -368,6 +370,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           const object = p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Furniture ID not found. Fixed features cannot be edited here.');
           const candidatePatch = resolveCandidate(a, p); const patch = candidatePatch || sanitizedPatch(a); const updated = checkPatch(object, patch, p.layout, p.room, p.rules); p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? updated : o);
         } else if (name === 'createCustomFurniture') {
+          if (p.room.accommodation) fail('provider_restriction', 'This standard accommodation pack accepts only its approved measured inventory; custom one-off furniture cannot be added to this pack.');
           if (!a.label.trim() || /[\u0000-\u001f\u007f]/.test(a.label)) fail('invalid_arguments', 'Use a visible human-readable label without control characters.');
           if (a.linkedDeskId !== undefined && a.kind !== 'chair') fail('invalid_property', 'Only a custom chair may use linkedDeskId. Other relationship, role and mount claims are not accepted.');
           if (a.geometry) { const geometryError = sectionalGeometryError(a.geometry, { w: a.widthCm, d: a.depthCm, h: a.heightCm }); if (a.kind !== 'sofa' || geometryError) fail('invalid_sectional_geometry', geometryError || 'Only a custom sofa may use sectional geometry.'); }
@@ -388,7 +391,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         } else if (name === 'placeFurniture') {
           const candidatePatch = resolveCandidate(a, p); let object: Furniture;
           if (a.ownedId) { if (a.variantId) fail('owned_resize_forbidden', 'Owned pieces cannot use catalogue variants.'); object = clone(state.inventory.find(o => o.id === a.ownedId) || fail('invalid_id', 'Owned inventory ID not found.')); if (p.layout.furniture.some(o => o.id === object.id)) fail('duplicate_owned_instance', 'This owned piece is already in the layout. Use updateFurniture.'); }
-          else { const variantId = candidatePatch?.variantId || a.variantId; if (!variantId) fail('invalid_arguments', 'Provide variantId or ownedId.'); object = fromVariant(variantId, `piece-${state.sequence + 1}-${p.revision}`); }
+          else { const variantId = candidatePatch?.variantId || a.variantId; if (!variantId) fail('invalid_arguments', 'Provide variantId or ownedId.'); if (!variantApprovedForRoom(p.room, variantId)) fail('provider_restriction', 'That product is not in this accommodation pack’s approved measured inventory.'); object = fromVariant(variantId, `piece-${state.sequence + 1}-${p.revision}`); }
           if (p.layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 movable pieces.');
           if (object.kind === 'tv') object.targetSofaId = a.targetSofaId || p.layout.furniture.find(o => o.kind === 'sofa')?.id;
           if (object.kind === 'window_treatment' && !(candidatePatch?.attachedOpeningId || a.attachedOpeningId)) fail('invalid_arguments', 'A window treatment requires attachedOpeningId naming an existing window.');
@@ -401,22 +404,24 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         } else if (name === 'proposeLayout') {
           const profile = p.room.profile || { kind: 'lounge' as const };
           const strategy = (a.strategy || 'tv_focused') as PlannerStrategy;
-          const loungeDefaults = strategy === 'maximum_open_floor' ? ['frame-tv-120']
+          const loungeDefaults = !a.strategy ? ['frame-tv-120','line-desk-100','pebble-table-80','weave-rug-200']
+            : strategy === 'maximum_open_floor' ? ['frame-tv-120']
             : strategy === 'social_conversation' ? ['frame-tv-120', 'nest-chair-60', 'pebble-table-80', 'weave-rug-200']
               : ['frame-tv-120', 'pebble-table-80', 'weave-rug-200'];
           const defaults = profile.kind === 'bedroom' ? [`haven-${profile.sleeping}-${profile.sleeping === 'single' ? '100' : profile.sleeping === 'double' ? '140' : '160'}`, ...(profile.storage ? ['tallline-wardrobe-100'] : []), ...(profile.workspace ? ['line-desk-100', 'nest-chair-60'] : []), ...Array.from({ length: Math.max(0, Math.min(2, profile.bedsideQuantity || 0)) }, () => 'nook-bedside-40')]
             : profile.kind === 'home_office' ? ['line-desk-100', 'nest-chair-60', ...(profile.seating ? ['nest-chair-60'] : []), ...(profile.storage ? ['archive-tall-80'] : [])]
               : profile.kind === 'bathroom_concept' ? ['weave-mat-80'] : loungeDefaults;
           const requested: string[] = a.variantIds || defaults;
+          for (const id of requested) if (!variantApprovedForRoom(p.room,id)) fail('provider_restriction', `${id} is not approved for accommodation pack ${p.room.accommodation?.packId}.`);
           requested.forEach(id => { if (!CATALOGUE.some(v => v.id === id)) fail('variant_unavailable', `Unknown catalogue variant: ${id}.`); });
-          (a.quantities || []).forEach((q: { variantId: string }) => { if (!CATALOGUE.some(v => v.id === q.variantId)) fail('variant_unavailable', `Unknown catalogue variant: ${q.variantId}.`); });
+          (a.quantities || []).forEach((q: { variantId: string }) => { if (!CATALOGUE.some(v => v.id === q.variantId)) fail('variant_unavailable', `Unknown catalogue variant: ${q.variantId}.`); if (!variantApprovedForRoom(p.room,q.variantId)) fail('provider_restriction',`${q.variantId} is not approved for accommodation pack ${p.room.accommodation?.packId}.`); });
           const priority: Record<string, number> = { sofa: 1, tv: 2, bed: 2, desk: 3, chair: 4, storage: 5, window_treatment: 5, ceiling_light: 5, wall_light: 5, floor_lamp: 6, table_lamp: 6, coffee_table: 6, table: 6, plant: 7, rug: 8 };
           // Explicit quantities are targets for their variants, not additions
           // to defaults or repeated retries. This keeps a request for two
           // nightstands at two even when the bedroom profile has that default.
           const quantityVariants = new Set((a.quantities || []).map((q: { variantId: string }) => q.variantId));
           const wanted = [...requested.filter(id => !quantityVariants.has(id)), ...(a.quantities || []).flatMap((q: { variantId: string; quantity: number }) => Array.from({ length: q.quantity }, () => q.variantId))];
-          for (const kind of p.rules.requiredKinds) if (!p.layout.furniture.some(o => o.kind === kind) && !wanted.some(id => CATALOGUE.find(v => v.id === id)?.kind === kind)) { const variant = CATALOGUE.find(v => v.kind === kind); if (variant) wanted.push(variant.id); }
+          for (const kind of p.rules.requiredKinds) if (!p.layout.furniture.some(o => o.kind === kind) && !wanted.some(id => CATALOGUE.find(v => v.id === id)?.kind === kind)) { const variant = CATALOGUE.find(v => v.kind === kind && variantApprovedForRoom(p.room,v.id)); if (variant) wanted.push(variant.id); }
           const rank = (id: string) => { const variant = CATALOGUE.find(v => v.id === id)!; return variant.tags?.includes('bedside') ? 2.5 : priority[variant.kind] || 9; };
           wanted.sort((a, b) => rank(a) - rank(b));
           let trials = 0; const start = Date.now();
@@ -547,6 +552,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   const humanAdd = (which: 'current' | 'proposal', variantId: string, patch?: HumanPatch, rejectInvalid = false) => human(() => {
     guardHuman(which);
     const next = clone(state), layout = which === 'current' ? next.current : next.proposal?.kind === 'layout' ? next.proposal.layout : fail('unconfirmed_setup', 'Create a layout proposal first.'), room = which === 'current' ? next.room : next.proposal!.room, rules = which === 'current' ? next.rules : next.proposal!.rules;
+    if (!variantApprovedForRoom(room,variantId)) fail('provider_restriction','That product is not in this accommodation pack’s approved measured inventory.');
     if (layout.furniture.length >= 30) fail('room_limit', 'V1 supports 30 pieces.'); next.sequence++;
     const o = fromVariant(variantId, `human-${next.sequence}`), sofa = layout.furniture.find(f => f.kind === 'sofa');
     if (o.kind === 'tv') { o.targetSofaId = sofa?.id; if (sofa) { const b = bounds(sofa), wall = faces[sofa.rotation], centre = wall === 'north' || wall === 'south' ? b.x + b.w / 2 : b.y + b.d / 2; o.wallAnchor = anchorForDirection(which === 'current' ? next.room : next.proposal!.room, wall, centre, o.sizeCm.w) || undefined; } }
@@ -596,6 +602,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   });
   const humanSetRequired = (id: string, required: boolean) => human(() => { const next = clone(state), inventory = next.inventory.find(o => o.id === id) || fail('invalid_id', 'Owned inventory piece not found.'); inventory.requiredInRoom = required; const o = next.current.furniture.find(o => o.id === id); if (o) o.requiredInRoom = required; next.currentRevision++; publish(next); return { operationSucceeded: true }; });
   const humanAddOwned = (input: { label: string; kind: Furniture['kind']; sizeCm: Furniture['sizeCm']; sleepSize?: Furniture['sleepSize']; storageRole?: 'wardrobe' | 'bedside' | 'general' }) => human(() => {
+    if (state.room.accommodation) fail('provider_restriction','This standard accommodation pack accepts only its approved measured inventory.');
     if (!input.label.trim() || input.label.length > 100 || !['sofa','chair','desk','coffee_table','storage','plant','bed','rug','other','table'].includes(input.kind)) fail('invalid_arguments', 'Choose a supported floor furniture type and name.');
     const size = input.sizeCm;
     if (![size.w,size.d].every(n => Number.isFinite(n) && n > 0 && n <= 600) || (size.h !== null && (!Number.isFinite(size.h) || size.h < 0 || size.h > 500))) fail('invalid_measurement', 'Use finite positive dimensions, and a measured height or unknown.');

@@ -3,7 +3,7 @@ import { invalidCustomFurnitureRecord } from './custom-furniture.ts';
 import { validate } from './sectional-engine.ts';
 import type { AppState, Furniture, Layout, Room } from './model.ts';
 import { validateRoomInputs } from './room-inputs.ts';
-import { object, openingSchema, validateSchema, type Schema } from './schemas.ts';
+import { accessibilitySchema, measurementContextSchema, object, openingSchema, validateSchema, type Schema } from './schemas.ts';
 
 /** The persisted JSON contract is closed and versioned. TypeScript types alone
  * do not validate untrusted local-storage/import data. */
@@ -43,8 +43,9 @@ const profile: Schema = { anyOf: [
   object({ kind: { enum: ['home_office'] }, seating: bool, storage: bool }, ['kind','seating','storage']),
   object({ kind: { enum: ['bathroom_concept'] }, fixtureIds: { type: 'array', items: id, maxItems: 12 }, conceptualOnly: { enum: [true] } }, ['kind','fixtureIds','conceptualOnly']),
 ] };
-const room = object({ name: str(100), widthCm: num(240,1000), depthCm: num(240,1000), floorPlan, openings: { type: 'array', items: openingSchema, maxItems: 12 }, fixtures: { type: 'array', items: furniture, maxItems: 12 }, openingLocks: { type: 'array', items: id, maxItems: 12 }, profile }, ['name','widthCm','depthCm','openings','fixtures']);
-const rules = object({ cellCm: { enum: [20] }, H_lowCm: num(0,300), walkHardCm: num(20,200), walkPreferredCm: num(20,200), storageFrontCm: num(20,200), chairPullCm: num(20,200), bedLongSideAccessCm: num(20,200), radiatorFrontCm: num(0,100), windowFrontCm: num(0,100), ceilingCm: num(100,500), requiredKinds: { type: 'array', items: kind, maxItems: 12 }, deskNearWindow: bool, openFloorM2: num(0,100) }, ['cellCm','H_lowCm','walkHardCm','walkPreferredCm','storageFrontCm','chairPullCm','bedLongSideAccessCm','radiatorFrontCm','windowFrontCm','ceilingCm','requiredKinds','deskNearWindow','openFloorM2']);
+const accommodation = object({ packId:id,providerId:id,buildingId:id,roomId:id,approvedVariantIds:{type:'array',items:id,maxItems:100},fixedFurnitureIds:{type:'array',items:id,maxItems:30},restrictions:{type:'array',items:str(300),maxItems:30} }, ['packId','providerId','buildingId','roomId','approvedVariantIds','fixedFurnitureIds','restrictions']);
+const room = object({ name: str(100), widthCm: num(240,1000), depthCm: num(240,1000), floorPlan, openings: { type: 'array', items: openingSchema, maxItems: 12 }, fixtures: { type: 'array', items: furniture, maxItems: 12 }, openingLocks: { type: 'array', items: id, maxItems: 12 }, profile, measurementContext:measurementContextSchema, accommodation }, ['name','widthCm','depthCm','openings','fixtures']);
+const rules = object({ cellCm: { enum: [20] }, H_lowCm: num(0,300), walkHardCm: num(20,200), walkPreferredCm: num(20,200), storageFrontCm: num(20,200), chairPullCm: num(20,200), bedLongSideAccessCm: num(20,200), radiatorFrontCm: num(0,100), windowFrontCm: num(0,100), ceilingCm: num(100,500), requiredKinds: { type: 'array', items: kind, maxItems: 12 }, deskNearWindow: bool, openFloorM2: num(0,100), accessibility:accessibilitySchema }, ['cellCm','H_lowCm','walkHardCm','walkPreferredCm','storageFrontCm','chairPullCm','bedLongSideAccessCm','radiatorFrontCm','windowFrontCm','ceilingCm','requiredKinds','deskNearWindow','openFloorM2']);
 const checkedAlternative = object({ trials: integer(), placementStatus: str(50), layoutStatus: str(50), proposalRevision: integer(1), ruleRevision: integer(1) }, ['trials','placementStatus','layoutStatus','proposalRevision','ruleRevision']);
 const omission = object({ objectId: id, variantId: id, reason: str(500), alternativeVariantId: id, alternativeChecked: checkedAlternative }, ['reason']);
 const proposal = object({ id, kind: { enum: ['layout','setup'] }, revision: integer(1), baseCurrentRevision: integer(1), baseRuleRevision: integer(1), layout, room, rules, omitted: { type: 'array', items: omission, maxItems: 60 } }, ['id','kind','revision','baseCurrentRevision','baseRuleRevision','layout','room','rules','omitted']);
@@ -115,6 +116,7 @@ export function validatePersistedDocument(value: unknown): string | null {
   for (const item of state.inventory) { const error = itemError(item,'inventory'); if (error) return error; }
   for (const item of state.room.fixtures) { const error = itemError(item,'fixture'); if (error) return error; }
   const inputs = validateRoomInputs(state.room,state.rules); if (inputs) return inputs;
+  if (state.room.accommodation && state.room.accommodation.fixedFurnitureIds.some(id => !state.current.furniture.some(item=>item.id===id&&item.locked.position&&item.locked.rotation&&item.locked.size))) return 'Accommodation fixed furniture must name locked pieces in Current.';
   const current = layoutError(state.current,state.room,state.inventory,'current'); if (current) return current;
   if (state.inventory.some(item => item.requiredInRoom && !state.current.furniture.some(placed => placed.id === item.id))) return 'Required owned inventory is missing from Current.';
   if (state.proposal) {

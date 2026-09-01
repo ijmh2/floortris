@@ -598,6 +598,38 @@ export function validate(layout: Layout, room: Room, rules: Rules, inventory: Fu
     if (voidM2 > roomM2 * 0.45) issue('prefer_even_distribution', `${voidM2.toFixed(1)} m² of the ${roomM2.toFixed(1)} m² floor is one empty block; the furniture is bunched into part of the room.`, layout.furniture.map(f => f.id), [], 'info', [], { tool: 'proposeLayout', args: {}, summary: 'Re-plan to spread the pieces' });
   }
 
+  // Optional accessibility planning assistance. Every result is deliberately
+  // advisory: it helps compare layouts but never claims regulatory compliance
+  // or substitutes for an individual assessment and local standards review.
+  const accessibility = rules.accessibility;
+  if (accessibility?.enabled) {
+    checkedRules.push('accessibility_turning_space','accessibility_route_width','accessibility_door_approach','accessibility_bed_transfer','accessibility_desk_approach','accessibility_reachable_storage','accessibility_projections');
+    const advisory = (code:string,message:string,ids:string[]=[],at:Cell[]=[])=>issue(code,`${message} Planning assistance only — not accessibility certification.`,ids,at,'warning',['accessibility_advisory']);
+    const turnCells = Math.ceil(accessibility.turningCircleCm / unit); let turningFound=false;
+    for(let y=0;y<=rows-turnCells&&!turningFound;y++) for(let x=0;x<=columns-turnCells&&!turningFound;x++){
+      const square=Array.from({length:turnCells*turnCells},(_,i)=>({x:x+i%turnCells,y:y+Math.floor(i/turnCells)}));
+      if(square.every(cell=>insideKeys.has(key(cell))&&!blocked.has(key(cell)))){turningFound=true;flag(square,'accessibility_turning_clear');}
+    }
+    if(!turningFound) advisory('accessibility_turning_space',`No conservative ${accessibility.turningCircleCm} cm clear turning envelope was found.`);
+    const accessSize=Math.ceil(accessibility.routeWidthCm/unit),accessPass=footprintPass(columns,rows,blocked,accessSize,room,doors,unit);
+    const inaccessibleZones=zones.filter(zone=>zone.purpose!=='bed_side_entry'&&!zoneReachable(zone.rect,accessPass,unit,true));
+    if(inaccessibleZones.length) advisory('accessibility_route_width',`${inaccessibleZones.length} required approach zone${inaccessibleZones.length===1?' is':'s are'} not connected by the configured ${accessibility.routeWidthCm} cm route.`,inaccessibleZones.map(zone=>zone.objectId),inaccessibleZones.flatMap(zone=>zone.cells));
+    for(const door of doors){
+      const approach=wallBand(room,door.wall,door.offsetCm,door.widthCm,accessibility.doorApproachDepthCm,door.segmentId),at=rectCells(approach,unit).filter(cell=>insideKeys.has(key(cell))),ids=occupants(at);
+      if(!rectInsideRoom(room,approach)||ids.length) advisory('accessibility_door_approach',`${door.entrance?'Entrance':'Door'} ${door.id} does not retain the configured ${accessibility.doorApproachDepthCm} cm clear approach.`,[door.id,...ids],at);
+    }
+    for(const bed of layout.furniture.filter(item=>item.kind==='bed')){
+      const bands=bedAccessBands(bed,accessibility.bedTransferCm,60,unit),clear=bands.find(band=>rectInsideRoom(room,band.rect)&&occupants(rectCells(band.rect,unit)).length===0);
+      if(!clear) advisory('accessibility_bed_transfer',`${bed.label} has no clear ${accessibility.bedTransferCm} cm transfer band on a long side.`,[bed.id],bands.flatMap(band=>rectCells(band.rect,unit).filter(cell=>insideKeys.has(key(cell)))));
+    }
+    for(const desk of layout.furniture.filter(item=>item.kind==='desk')){
+      const approach=frontBand(desk,accessibility.deskApproachCm,unit),at=rectCells(approach,unit),ids=occupants(at,[desk.id]);
+      if(!rectInsideRoom(room,approach)||ids.length) advisory('accessibility_desk_approach',`${desk.label} does not retain the configured ${accessibility.deskApproachCm} cm clear desk approach.`,[desk.id,...ids],at.filter(cell=>insideKeys.has(key(cell))));
+    }
+    for(const storage of layout.furniture.filter(item=>item.kind==='storage'&&item.sizeCm.h!==null&&item.elevationCm+item.sizeCm.h!>accessibility.reachableStorageMaxCm)) advisory('accessibility_reachable_storage',`${storage.label} extends above the configured ${accessibility.reachableStorageMaxCm} cm reach-height assumption.`,[storage.id]);
+    for(const projection of layout.furniture.filter(item=>['tv','wall_light','window_treatment'].includes(item.kind)&&item.sizeCm.d>accessibility.maxProjectionCm)) advisory('accessibility_projection',`${projection.label} projects ${projection.sizeCm.d} cm from its mounting surface, above the configured ${accessibility.maxProjectionCm} cm assumption.`,[projection.id]);
+  }
+
   const missingRequired = [ ...requirements.filter(r => r.required && r.met < r.quantity).map(r => r.key), ...inventory.filter(o => o.requiredInRoom && !layout.furniture.some(f => f.id === o.id)).map(o => o.id) ];
   if (rules.requiredKinds.includes('tv') && layout.furniture.some(o => o.kind === 'tv') && !layout.furniture.some(o => o.kind === 'tv' && o.targetSofaId && layout.furniture.some(s => s.id === o.targetSofaId && s.kind === 'sofa'))) missingRequired.push('tv:sofa-association');
   const hardFailures = issues.filter(i => i.severity === 'block').length;

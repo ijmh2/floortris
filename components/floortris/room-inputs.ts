@@ -1,6 +1,7 @@
 import { clone, type AppState, type Furniture, type Room, type RoomProfile, type Rules, type Wall } from './model.ts';
-import { openingSchema, TOOL_SCHEMAS, validateSchema } from './schemas.ts';
+import { accessibilitySchema, measurementContextSchema, openingSchema, TOOL_SCHEMAS, validateSchema } from './schemas.ts';
 import { floorPlanError, rectInsideRoom, resolveWallSegment, wallRect } from './floorplan.ts';
+import { CATALOGUE } from './data.ts';
 
 export const walls: Wall[] = ['north', 'east', 'south', 'west'];
 export const horizontalWall = (wall: Wall) => wall === 'north' || wall === 'south';
@@ -78,6 +79,12 @@ export function validateRoomInputs(room: Room, rules: Rules): string | null {
   const geometry = validateSchema({ proposalId: 'human', revision: 1, name: room.name, widthCm: room.widthCm, depthCm: room.depthCm }, TOOL_SCHEMAS.setRoomGeometry.inputSchema);
   if (geometry) return `Room: ${geometry}`;
   if (!room.name.trim()) return 'Give the room a name.';
+  if (room.measurementContext) { const error=validateSchema(room.measurementContext,measurementContextSchema,'measurementContext'); if(error)return error; }
+  if (rules.accessibility) { const error=validateSchema(rules.accessibility,accessibilitySchema,'accessibility'); if(error)return error; }
+  if (room.accommodation) {
+    const pack=room.accommodation,ids=[pack.packId,pack.providerId,pack.buildingId,pack.roomId];
+    if(ids.some(id=>typeof id!=='string'||!id||id.length>100)||new Set(pack.approvedVariantIds).size!==pack.approvedVariantIds.length||pack.approvedVariantIds.some(id=>!CATALOGUE.some(variant=>variant.id===id))||new Set(pack.fixedFurnitureIds).size!==pack.fixedFurnitureIds.length||pack.restrictions.some(restriction=>typeof restriction!=='string'||!restriction||restriction.length>300)) return 'Accommodation pack metadata is invalid.';
+  }
   const outline = floorPlanError(room.floorPlan, room.widthCm, room.depthCm); if (outline) return `Room outline: ${outline}`;
   const { cellCm, ...constraints } = rules;
   if (cellCm !== 20) return 'The grid must remain 20 cm.';
