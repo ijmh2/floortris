@@ -55,11 +55,18 @@ ready; you look when you want to. Apply is yours alone.
 
 The clearest high-impact deployment is standardized university accommodation.
 A university or accommodation provider can publish measured room shells and an
-approved inventory; students can add the exact furniture and belongings they
-own, then ask an agent for a checked, reviewable proposal before move-in. This
+approved inventory; Floortris now includes two local static provider packs with
+building/room identity, locked supplied pieces and restrictions. Students can ask
+an agent for three checked alternatives, then export a move-in schedule. This
 reduces repetitive measurement/layout work while keeping each student's choices
 and the final Apply decision local and visible. The same pattern also applies to
 other repeatable rooms such as supported housing, rentals and small offices.
+
+Seven one-click benchmark rooms make those claims reproducible. `/evals` runs every
+brief twice in-browser and reports brief completion, final hard violations, tool
+calls, refusals, Current preservation and repeat validity. Server-free share links
+carry compressed validated snapshots in the URL fragment; oversized rooms use JSON.
+No room, evaluation or share payload is sent to a backend.
 
 ## Human and agent, sharing one document
 

@@ -35,7 +35,34 @@ planner or claim tool execution. Manual editing remains available to people.
 Page guidance is not a security boundary: it cannot equip an unsupported runtime
 with WebMCP or prove the human can see an isolated browser session. The registration
 badge says only that this page registered its tools. Saved room URLs select local
-documents; they do not transfer data across browsers or devices.
+documents. Explicit **server-free share links** are different: they place a compressed,
+validated room snapshot in the URL fragment so another browser can import it without
+uploading anything. Safe size limits fall back to JSON export.
+
+## Local product layers
+
+- **Checked strategy comparison** runs maximum-open-floor, social/conversation and
+  TV-focused planners in isolation. It scores their complete engine reports and the
+  human may select one as Proposal; none can auto-Apply.
+- **Seven benchmark rooms** cover an L-shape, connected U-sectional, TV/door trap,
+  narrow bedroom, accessible studio, window/radiator conflict and awkward nook.
+  Every gallery entry includes a suggested agent prompt.
+- **Accommodation packs** ship as static local data with provider/building/room IDs,
+  fixed locked furniture, approved measured inventory and visible restrictions.
+- **Measurement provenance** records labelled, provider, human-confirmed, inferred
+  and estimated dimensions plus assumptions. `generateRoom` accepts the same closed
+  provenance record when an external agent interprets a drawing.
+- **Accessibility planning packs** add advisory turning, route, door approach, bed
+  transfer, desk approach, storage reach and projection checks. They are explicitly
+  planning assistance, never certification.
+- **Static provider products** decorate measured catalogue variants with example
+  supplier, product, price and pack compatibility metadata. There is no stock lookup,
+  checkout or commerce backend.
+- Room → export provides a CSV furniture schedule and PDF-friendly printable move-in
+  sheet with measurements, provenance, placement, omissions, fixtures and warnings.
+- `/evals` reruns all seven benchmark briefs twice in the browser and reports brief
+  completion, hard violations, tool calls, elapsed time, refusals, Current preservation
+  and repeat validity. A checked-in snapshot makes the evidence visible before rerun.
 
 ## Texture pack
 
@@ -153,6 +180,8 @@ Human-only methods, **not registered tools**:
 - `discardProposal()`; `resetDemo()`
 - `humanStageRoom(room, rules, expectedStamp, replaceProposal?)`: atomic physical-room draft with optimistic concurrency and explicit replacement permission.
 - `undo()`; `redo()`; `getHistory()`: session history with fresh authority tokens on restore.
+- `generateStrategyAlternatives()`; `selectStrategyAlternative(id)`: local human
+  comparison and selection. Selection creates a revisioned Proposal and never Apply.
 
 `which` for human furniture methods is `current | proposal`. A human Current edit increments C; a human Proposal edit increments P. Ownership dimensions remain authoritative even if removal/position locks are explicitly cleared. Only the human may change a measured owned record, its requirement or locks. An owned item's size lock also protects removal, per the spec; the UI provides an explicit unlock-all action for an optional owned piece.
 
