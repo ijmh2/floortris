@@ -105,7 +105,7 @@ test('setup commands cannot mutate an accepted layout or current geometry',async
 });
 
 // The 3D projection is tested against the authoritative 2D bounds, without WebGL.
-import { Box3, Vector3, PerspectiveCamera } from 'three';
+import { Box3, Mesh, Vector3, PerspectiveCamera, type Object3D } from 'three';
 import { buildFurniture, buildRoomScene, disposeObject, furniturePose, updateCutaway, wallPoint } from './scene3d.ts';
 import { makeCompactRoom } from './samples.ts';
 import { rotations, type Wall } from './model.ts';
@@ -141,10 +141,17 @@ test('3D wall TVs use wall anchors and elevation, while the radiator keeps its l
 test('3D scene and camera cutaway never mutate room data or validation',()=>{
   const s=makeCompactRoom(),before=JSON.stringify(s),p=s.proposal!,r=validate(p.layout,p.room,p.rules,s.inventory);
   const scene=buildRoomScene(p.room,p.layout,p.rules),camera=new PerspectiveCamera();camera.position.set(6,5,6);
+  const casters=(root:Object3D)=>{const ids:string[]=[];root.traverseVisible(object=>{if(object instanceof Mesh&&object.castShadow)ids.push(object.uuid);});return ids.sort();};
+  for(const wall of scene.walls.values())wall.traverse(object=>{if(object instanceof Mesh){assert.equal(object.castShadow,false);assert.equal(object.receiveShadow,true);}});
+  assert.ok([...scene.pieces.values()].some(piece=>casters(piece).length>0));
+  const originalCasters=casters(scene.root);
   assert.equal(scene.pieces.size,8);assert.equal(updateCutaway(scene,camera,p.room,true),true);
   assert.equal(scene.walls.get('south')!.visible,false);assert.equal(scene.walls.get('east')!.visible,false);assert.equal(scene.walls.get('north')!.visible,true);assert.equal(scene.walls.get('west')!.visible,true);
+  assert.deepEqual(casters(scene.root),originalCasters);
   assert.equal(updateCutaway(scene,camera,p.room,true),false);
+  camera.position.set(-1,5,-1);assert.equal(updateCutaway(scene,camera,p.room,true),true);assert.deepEqual(casters(scene.root),originalCasters);
   assert.equal(updateCutaway(scene,camera,p.room,false),true);assert.ok([...scene.walls.values()].every(w=>w.visible));
+  assert.deepEqual(casters(scene.root),originalCasters);
   assert.equal(JSON.stringify(s),before);assert.deepEqual(validate(p.layout,p.room,p.rules,s.inventory),r);disposeObject(scene.root);
   const unknown=clone(s.inventory[0]);unknown.sizeCm.h=null;const mesh=buildFurniture(unknown,s.room);assert.equal(mesh.userData.heightUnknown,true);assert.equal(unknown.sizeCm.h,null);disposeObject(mesh);
 });

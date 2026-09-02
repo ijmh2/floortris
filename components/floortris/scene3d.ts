@@ -523,6 +523,15 @@ export function buildRoomScene(room: Room, layout: Layout, rules: Rules, texture
         root.add(leaf);
       }
     }
+    // Wall visibility follows the camera in cutaway mode. Keeping those walls
+    // out of the directional shadow pass makes the caster set camera-invariant,
+    // while receiveShadow preserves depth and contact shading on visible walls.
+    group.traverse(object => {
+      if (object instanceof THREE.Mesh) {
+        object.castShadow = false;
+        object.receiveShadow = true;
+      }
+    });
   }
   for (const item of [...room.fixtures,...layout.furniture]) { const piece=buildFurniture(item,room,rules.cellCm);pieces.set(item.id,piece);root.add(piece); }
   return {root,walls,pieces};
