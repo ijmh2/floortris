@@ -107,7 +107,7 @@ test('setup commands cannot mutate an accepted layout or current geometry',async
 // The 3D projection is tested against the authoritative 2D bounds, without WebGL.
 import { Box3, Mesh, Vector3, PerspectiveCamera, type Object3D } from 'three';
 import { buildFurniture, buildRoomScene, disposeObject, furniturePose, updateCutaway, wallPoint } from './scene3d.ts';
-import { makeCompactRoom } from './samples.ts';
+import { makeCompactRoom, makeSketchRoom } from './samples.ts';
 import { rotations, type Wall } from './model.ts';
 const close = (a:number,b:number) => assert.ok(Math.abs(a-b)<1e-5,`${a} ≠ ${b}`);
 
@@ -142,6 +142,8 @@ test('3D scene and camera cutaway never mutate room data or validation',()=>{
   const s=makeCompactRoom(),before=JSON.stringify(s),p=s.proposal!,r=validate(p.layout,p.room,p.rules,s.inventory);
   const scene=buildRoomScene(p.room,p.layout,p.rules),camera=new PerspectiveCamera();camera.position.set(6,5,6);
   const casters=(root:Object3D)=>{const ids:string[]=[];root.traverseVisible(object=>{if(object instanceof Mesh&&object.castShadow)ids.push(object.uuid);});return ids.sort();};
+  const floorMeshes=scene.root.children.filter((object):object is Mesh=>object instanceof Mesh);
+  assert.ok(floorMeshes.length>=2);assert.ok(floorMeshes.every(mesh=>!mesh.castShadow&&mesh.receiveShadow));
   for(const wall of scene.walls.values())wall.traverse(object=>{if(object instanceof Mesh){assert.equal(object.castShadow,false);assert.equal(object.receiveShadow,true);}});
   assert.ok([...scene.pieces.values()].some(piece=>casters(piece).length>0));
   const originalCasters=casters(scene.root);
@@ -162,6 +164,12 @@ test('3D door leaf preserves the hinge endpoint and inward/outward pose on all f
     s.room.openings=[{id:'door-test',kind:'door',wall,offsetCm:40,widthCm:80,hinge,swing,mechanism:'hinged',angle:90,entrance:true}];
     const scene=buildRoomScene(s.room,s.current,s.rules),leaf=scene.root.getObjectByName('door-door-test')!;
     const [x,z]=wallPoint(s.room,wall,hinge==='start'?.4:1.2,swing==='in'?.4:-.4);
-    close(leaf.position.x,x);close(leaf.position.z,z);disposeObject(scene.root);
+    close(leaf.position.x,x);close(leaf.position.z,z);leaf.traverse(object=>{if(object instanceof Mesh){assert.equal(object.castShadow,false);assert.equal(object.receiveShadow,true);}});disposeObject(scene.root);
   }
+});
+
+test('custom floor shells receive light without casting directional shadows',()=>{
+  const s=makeSketchRoom(),scene=buildRoomScene(s.room,s.current,s.rules);
+  const floorMeshes=scene.root.children.filter((object):object is Mesh=>object instanceof Mesh);
+  assert.equal(floorMeshes.length,2);assert.ok(floorMeshes.every(mesh=>!mesh.castShadow&&mesh.receiveShadow));disposeObject(scene.root);
 });

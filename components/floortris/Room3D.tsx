@@ -15,9 +15,9 @@ export default function Room3D(props: Props) {
   useEffect(() => {
     const el = host.current!;
     let renderer: THREE.WebGLRenderer;
-    try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'low-power' }); }
+    try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' }); }
     catch { queueMicrotask(() => setError('3D is unavailable in this browser. Your room and all editing tools are still available in 2D.')); return; }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setClearColor('#eef1e9'); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
     // The room and its lights are static while the camera orbits. Cutaway walls
     // never cast shadows, so camera-driven visibility changes cannot invalidate

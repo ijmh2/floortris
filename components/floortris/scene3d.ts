@@ -41,6 +41,15 @@ function box(parent: THREE.Object3D, size: [number, number, number], at: [number
 function cylinder(parent: THREE.Object3D, radiusTop: number, radiusBottom: number, height: number, at: [number, number, number], mat: THREE.Material) {
   const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 20), mat); mesh.position.set(...at); mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
 }
+function receiveOnly<T extends THREE.Object3D>(object: T): T {
+  object.traverse(child => {
+    if (child instanceof THREE.Mesh) {
+      child.castShadow = false;
+      child.receiveShadow = true;
+    }
+  });
+  return object;
+}
 export function buildFurniture(item: Furniture, room: Room, cellCm = 20): THREE.Group {
   const g = new THREE.Group(), pose = furniturePose(item, room, cellCm);
   g.name = item.id; g.userData.objectId = item.id; g.userData.heightUnknown = item.sizeCm.h === null;
@@ -476,11 +485,11 @@ export function buildRoomScene(room: Room, layout: Layout, rules: Rules, texture
   const floor = finishMaterial(floorFinish, textures), wallMat = finishMaterial(PALETTES.wall.find(p => p.id === layout.appearance.wall), textures);
   if (room.floorPlan) {
     const shape = new THREE.Shape(), points = floorPoints(room); shape.moveTo(points[0].xCm / 100, points[0].yCm / 100); points.slice(1).forEach(point => shape.lineTo(point.xCm / 100, point.yCm / 100)); shape.closePath();
-    const base = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: .14, bevelEnabled: false }), material('#d2c7b4')); base.rotation.x = Math.PI / 2; base.receiveShadow = true; root.add(base);
-    const surface = new THREE.Mesh(new THREE.ShapeGeometry(shape), floor); surface.rotation.x = Math.PI / 2; surface.position.y = .001; surface.receiveShadow = true; mapFinishUV(surface, 'floor'); root.add(surface);
+    const base = receiveOnly(new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: .14, bevelEnabled: false }), material('#d2c7b4'))); base.rotation.x = Math.PI / 2; root.add(base);
+    const surface = receiveOnly(new THREE.Mesh(new THREE.ShapeGeometry(shape), floor)); surface.rotation.x = Math.PI / 2; surface.position.y = .001; mapFinishUV(surface, 'floor'); root.add(surface);
   } else {
-    box(root,[w + .16,.14,d + .16],[w / 2,-.07,d / 2],material('#d2c7b4'),.03);
-    mapFinishUV(box(root,[w,.018,d],[w / 2,-.009,d / 2],floor), 'floor');
+    receiveOnly(box(root,[w + .16,.14,d + .16],[w / 2,-.07,d / 2],material('#d2c7b4'),.03));
+    mapFinishUV(receiveOnly(box(root,[w,.018,d],[w / 2,-.009,d / 2],floor)), 'floor');
   }
   if (!room.floorPlan && !floorFinish?.texture) {
     const seam = material('#c7b99f');
@@ -520,18 +529,13 @@ export function buildRoomScene(room: Room, layout: Layout, rules: Rules, texture
         leaf.position.set(x,0,z);leaf.rotation.y=wall==='north'||wall==='south'?0:Math.PI/2;
         box(leaf,[.035,Math.min(h,2.1),width],[0,Math.min(h,2.1)/2,0],material('#cbbba1'),.01);
         // The opening height is visual-only; V1 has no measured door-height field.
-        root.add(leaf);
+        receiveOnly(leaf);root.add(leaf);
       }
     }
     // Wall visibility follows the camera in cutaway mode. Keeping those walls
     // out of the directional shadow pass makes the caster set camera-invariant,
     // while receiveShadow preserves depth and contact shading on visible walls.
-    group.traverse(object => {
-      if (object instanceof THREE.Mesh) {
-        object.castShadow = false;
-        object.receiveShadow = true;
-      }
-    });
+    receiveOnly(group);
   }
   for (const item of [...room.fixtures,...layout.furniture]) { const piece=buildFurniture(item,room,rules.cellCm);pieces.set(item.id,piece);root.add(piece); }
   return {root,walls,pieces};
