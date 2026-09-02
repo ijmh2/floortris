@@ -23,11 +23,13 @@ export function migrateState(input: AppState): AppState {
     next.room.profile = { kind: 'lounge' };
     if (next.proposal && !next.proposal.room.profile) next.proposal.room.profile = { kind: 'lounge' };
   }
+  // Older documents had only revision tokens. They remain readable; their
+  // visible proposal becomes an independent branch from the saved Current.
+  if (next.proposal && !next.proposal.baseLayout) next.proposal.baseLayout = clone(next.current);
   return next;
 }
 export const proposalStatus = (s: AppState, p: Proposal | null = s.proposal) => {
   if (!p) return 'none';
-  if (p.baseCurrentRevision !== s.currentRevision || p.baseRuleRevision !== s.ruleRevision) return 'stale';
   const report = validate(p.layout, p.room, p.rules, s.inventory, false);
   return report.validation.hardFailures ? 'blocked' : p.kind === 'setup' || report.brief.status === 'incomplete' ? 'drafting' : 'ready_for_review';
 };
@@ -35,6 +37,44 @@ function frozen<T>(value: T): T { if (value && typeof value === 'object') { Obje
 class CommandError extends Error { code: string; constructor(code: string, message: string) { super(message); this.code = code; } }
 function fail(code: string, message: string): never { throw new CommandError(code, message); }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+type ReconciliationChoice = 'yours' | 'proposal';
+type ReconciliationConflict = { key: string; label: string; yours: Furniture | null; proposal: Furniture | null };
+/** Three-way layout merge. Nothing is overwritten when both branches edited the
+ * same object: the caller must deliberately choose that object's source. */
+function reconcileLayout(base: Layout, current: Layout, proposal: Layout, choices: Record<string, ReconciliationChoice> = {}) {
+  const baseById = new Map(base.furniture.map(item => [item.id, item]));
+  const currentById = new Map(current.furniture.map(item => [item.id, item]));
+  const proposalById = new Map(proposal.furniture.map(item => [item.id, item]));
+  const ids = [...new Set([...baseById.keys(), ...currentById.keys(), ...proposalById.keys()])];
+  const furniture: Furniture[] = [], conflicts: ReconciliationConflict[] = [];
+  const choose = (key: string, label: string, yours: Furniture | null, theirs: Furniture | null) => {
+    const picked = choices[key];
+    if (!picked) { conflicts.push({ key, label, yours: yours && clone(yours), proposal: theirs && clone(theirs) }); return undefined; }
+    return picked === 'yours' ? yours : theirs;
+  };
+  for (const id of ids) {
+    const b = baseById.get(id), c = currentById.get(id), p = proposalById.get(id);
+    if (!b) {
+      if (c && p && !same(c, p)) { const picked = choose(`object:${id}`, c.label, c, p); if (picked) furniture.push(clone(picked)); }
+      else if (c || p) furniture.push(clone(c || p!));
+      continue;
+    }
+    const currentChanged = !same(c || null, b), proposalChanged = !same(p || null, b);
+    if (currentChanged && proposalChanged && !same(c || null, p || null)) { const picked = choose(`object:${id}`, b.label, c || null, p || null); if (picked) furniture.push(clone(picked)); }
+    else if (proposalChanged) { if (p) furniture.push(clone(p)); }
+    else if (c) furniture.push(clone(c));
+  }
+  const appearance = { ...current.appearance };
+  for (const key of ['wall', 'floor'] as const) {
+    const currentChanged = current.appearance[key] !== base.appearance[key], proposalChanged = proposal.appearance[key] !== base.appearance[key];
+    if (currentChanged && proposalChanged && current.appearance[key] !== proposal.appearance[key]) {
+      const choice = choices[`appearance:${key}`];
+      if (!choice) conflicts.push({ key: `appearance:${key}`, label: `${key} finish`, yours: null, proposal: null });
+      else appearance[key] = choice === 'yours' ? current.appearance[key] : proposal.appearance[key];
+    } else if (proposalChanged) appearance[key] = proposal.appearance[key];
+  }
+  return { layout: { furniture, appearance }, conflicts };
+}
 const issueSignature = (i: Report['issues'][number]) => `${i.code}|${[...i.objectIds].sort().join(',')}|${i.destinationId || ''}`;
 const ISSUE_COST: Record<string, number> = { side_against_wall: 240, prefer_wall_backing: 220, bed_head_wall: 220, coffee_table_position: 210, coffee_table_gap: 200, chair_desk_offset: 140, prefer_flush_to_wall: 80, meeting_table_clearance: 80, prefer_sofa_into_room: 70, walk_tight: 40, prefer_desk_window: 25, table_centred_on_sofa: 25, prefer_even_distribution: 3, prefer_open_floor: 3 };
 const issueCost = (issue: Report['issues'][number]) => issue.severity === 'block' ? 10000 : ISSUE_COST[issue.code] || (issue.severity === 'warning' ? 50 : 1);
@@ -68,14 +108,14 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
   // Restore content, never old authority tokens: in-flight searches, retries and
   // captured Apply buttons must not become valid again after undo/redo/reset.
   const restored = (snapshot: AppState) => {
-    const next = clone(snapshot), fresh = proposalStatus(snapshot) !== 'stale';
+    const next = clone(snapshot);
     next.currentRevision = Math.max(state.currentRevision, snapshot.currentRevision) + 1;
     next.ruleRevision = Math.max(state.ruleRevision, snapshot.ruleRevision) + 1;
     next.sequence = Math.max(state.sequence, snapshot.sequence) + 1;
     if (next.proposal) {
       next.proposal.id = `proposal-${next.sequence}`;
       next.proposal.revision = Math.max(state.proposal?.revision || 0, next.proposal.revision) + 1;
-      next.proposal.baseCurrentRevision = next.currentRevision - (fresh ? 0 : 1);
+      next.proposal.baseCurrentRevision = next.currentRevision;
       next.proposal.baseRuleRevision = next.ruleRevision;
     }
     retries.clear(); return next;
@@ -85,13 +125,12 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     const p = state.proposal;
     if (!p || p.id !== a.proposalId) fail('proposal_not_found', 'The requested proposal is not active. Read getRoomState before editing.');
     if (p.revision !== a.revision) fail('revision_conflict', `Expected proposal revision ${a.revision}; active revision is ${p.revision}. Read it again before editing.`);
-    if (p.baseCurrentRevision !== state.currentRevision || p.baseRuleRevision !== state.ruleRevision) fail('stale_proposal', 'Yours or accepted room inputs changed. The human must discard this stale draft and recreate it.');
     if (kind && p.kind !== kind) fail(kind === 'layout' ? 'unconfirmed_setup' : 'unauthorized_proposal_kind', `This command requires a ${kind} proposal. Setup inputs require separate human confirmation.`);
     return p;
   };
   const presentIssue = (issue: Report['issues'][number], p: Proposal | null, cellLimit: number) => {
     const { fix: hint, ...detail } = issue;
-    const editable = p?.kind === 'layout' && p.baseCurrentRevision === state.currentRevision && p.baseRuleRevision === state.ruleRevision;
+    const editable = p?.kind === 'layout';
     const fix = editable && hint ? { ...hint, args: { ...hint.args, proposalId: p.id, revision: p.revision } } : undefined;
     const objectId = editable ? issue.objectIds.find(id => p.layout.furniture.some(o => o.id === id)) : undefined;
     return { ...detail, cells: issue.cells.slice(0, cellLimit), cellCount: issue.cells.length,
@@ -138,7 +177,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       // A new catalogue variant is a new role as well as new dimensions. In
       // particular, replacing a wardrobe with a bedside table must not retain
       // the wardrobe tags and satisfy the bedroom brief by accident.
-      next = { ...next, sizeCm: clone(v.sizeCm), label: v.name, tags, sleepSize, backEdge: v.backEdge, fixtureType: v.fixtureType, lightingZone: patch.lightingZone || v.lightingZone };
+      next = { ...next, sizeCm: clone(v.sizeCm), label: v.name, tags, sleepSize, backEdge: v.backEdge, ...(v.geometry ? { geometry: clone(v.geometry) } : { geometry: undefined }), fixtureType: v.fixtureType, lightingZone: patch.lightingZone || v.lightingZone };
     }
     if (object.ownership === 'owned') { next.sizeCm = clone(source.sizeCm); next.requiredInRoom = source.requiredInRoom; next.locked = clone(source.locked); next.tags = clone(source.tags); next.sleepSize = source.sleepSize; }
     if (object.ownership === 'custom') { next.sizeCm = clone(source.sizeCm); next.kind = source.kind; next.label = source.label; next.requiredInRoom = false; next.locked = { ...clone(source.locked), size: true }; next.tags = []; next.customProvenance = clone(source.customProvenance); delete next.variantId; delete next.backEdge; delete next.sleepSize; }
@@ -310,7 +349,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       let result: CommandResult;
       if (name === 'listCatalogue') {
         const list = CATALOGUE.filter(v => (!a.kind || v.kind === a.kind) && (!a.profile || !v.recommendedProfiles || v.recommendedProfiles.includes(a.profile)) && (!a.tag || v.tags?.includes(a.tag))), offset = a.offset || 0, limit = a.limit || 50;
-        return { operationSucceeded: true, catalogue: clone(list.slice(offset, offset + limit).map(variant => ({ ...variant, approvedForActiveRoom: variantApprovedForRoom(state.room,variant.id), providerProduct: productForVariant(variant.id) }))), total: list.length, offset, hasMore: offset + limit < list.length, palettes: clone(PALETTES) };
+        return { operationSucceeded: true, catalogue: clone(list.slice(offset, offset + limit).map(variant => ({ ...variant, ...(variant.geometry ? { sectional: { chaiseSide: variant.geometry.chaiseSide, primaryFacing: variant.geometry.primaryFacing, modules: variant.geometry.modules, envelopeCm: variant.sizeCm } } : {}), approvedForActiveRoom: variantApprovedForRoom(state.room,variant.id), providerProduct: productForVariant(variant.id) }))), total: list.length, offset, hasMore: offset + limit < list.length, palettes: clone(PALETTES) };
       }
       if (['getRoomState', 'listFurniture', 'checkLayout'].includes(name)) {
         const snap = snapshot(a); let report = validate(snap.layout, snap.room, snap.rules, state.inventory); if (a.candidateId) { const c = candidates.get(a.candidateId) || fail('revision_conflict','Candidate is stale or unavailable.'); if (a.which !== 'proposal' || c.proposalRevision !== snap.revision || c.ruleRevision !== state.ruleRevision) fail('revision_conflict','Candidate revision differs from the inspected draft.'); report = candidateReports.get(a.candidateId) || fail('revision_conflict','Candidate detail is no longer available.'); } const common = { operationSucceeded: true, documentId: documentId(state), which: snap.which, revision: snap.revision, currentRevision: state.currentRevision, ruleRevision: state.ruleRevision, proposalId: state.proposal?.id, status: proposalStatus(state), profile: snap.room.profile || { kind: 'lounge' }, conceptualOnly: report.conceptualOnly || false };
@@ -333,7 +372,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           const inputError = validateRoomInputs(room, rules); if (inputError) fail('invalid_room_inputs', inputError);
           const layout: Layout = { furniture: [], appearance };
           const draft: AppState = { version: 2, documentId: id, room, rules, current: clone(layout), inventory: [], currentRevision: 1, ruleRevision: 1, sequence: 1,
-            proposal: { id: `${id}-proposal-1`, kind: 'layout', revision: 1, baseCurrentRevision: 1, baseRuleRevision: 1, room: clone(room), rules: clone(rules), layout, omitted: [] } };
+            proposal: { id: `${id}-proposal-1`, kind: 'layout', revision: 1, baseCurrentRevision: 1, baseRuleRevision: 1, baseLayout: clone(layout), room: clone(room), rules: clone(rules), layout, omitted: [] } };
           // Plan with the same engine in an isolated document. Nothing is published
           // until planning, cancellation, concurrency and persistence checks pass.
           const planner = createStore(draft);
@@ -353,7 +392,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
         if (state.proposal) fail('active_proposal_exists', 'A draft already exists for this room. Use generateRoom to create a separate new room without discarding it. Only the human can discard or apply this room’s draft.');
         if (state.currentRevision !== a.expectedCurrentRevision || state.ruleRevision !== a.expectedRuleRevision) fail('revision_conflict', 'Accepted current or rule revision changed. Read getRoomState again.');
         const next = clone(state); next.sequence++;
-        const p: Proposal = { id: `proposal-${next.sequence}`, kind: a.kind, revision: 1, baseCurrentRevision: state.currentRevision, baseRuleRevision: state.ruleRevision, layout: clone(state.current), room: clone(state.room), rules: clone(state.rules), omitted: [] }; next.proposal = p; publish(next); result = envelope(p);
+        const p: Proposal = { id: `proposal-${next.sequence}`, kind: a.kind, revision: 1, baseCurrentRevision: state.currentRevision, baseRuleRevision: state.ruleRevision, baseLayout: clone(state.current), layout: clone(state.current), room: clone(state.room), rules: clone(state.rules), omitted: [] }; next.proposal = p; publish(next); result = envelope(p);
       } else {
         const p = clone(guard(a, ['setRoomGeometry', 'setOpening', 'setConstraints'].includes(name) ? 'setup' : 'layout'));
         if (name === 'findPlacements') { const searched = await search(p, a, signal); guard(a, 'layout'); searched.found.forEach(c => candidates.set(c.candidateId, c)); return { ...envelope(p), candidates: clone(searched.found), trials: searched.trials, searchBoundReached: searched.exhausted, explanation: searched.found.length ? 'Every returned placement passed relevant/new hard checks; layoutStatus includes unrelated existing issues.' : 'No candidate found within the bounded scan. This is not proof that no placement exists.' }; }
@@ -471,7 +510,24 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
                 else { p.layout.furniture = p.layout.furniture.filter(o => o.id !== object.id); p.omitted.push({ variantId, reason: 'Desk omitted because no linked chair could be placed in the same bounded work arrangement.' }); }
               }
             }
-            else { const relational = v.kind === 'window_treatment' || v.kind === 'table_lamp', smaller = !relational && CATALOGUE.filter(x => x.kind === v.kind && x.sizeCm.w * x.sizeCm.d < v.sizeCm.w * v.sizeCm.d).sort((a, b) => b.sizeCm.w * b.sizeCm.d - a.sizeCm.w * a.sizeCm.d)[0]; const checkedSmaller = smaller && Date.now() - start <= 6500 ? await search(p,{variantId:smaller.id,limit:1,strategy},signal,600) : undefined; trials += checkedSmaller?.trials || 0; p.omitted.push({ variantId, reason: `No placement found in this bounded greedy scan. ${p.rules.requiredKinds.includes(v.kind) ? 'This required function is still missing.' : 'Optional piece omitted.'} Not proof of infeasibility.`, ...(smaller && checkedSmaller?.found[0] ? { alternativeVariantId: smaller.id, alternativeChecked: { trials:checkedSmaller.trials, placementStatus:'valid', layoutStatus:checkedSmaller.found[0].layoutStatus, proposalRevision:p.revision, ruleRevision:state.ruleRevision } } : {}) }); }
+            else {
+              const relational = v.kind === 'window_treatment' || v.kind === 'table_lamp';
+              const smaller = !relational && CATALOGUE.filter(x => x.kind === v.kind && x.sizeCm.w * x.sizeCm.d < v.sizeCm.w * v.sizeCm.d).sort((a, b) => b.sizeCm.w * b.sizeCm.d - a.sizeCm.w * a.sizeCm.d)[0];
+              const checkedSmaller = smaller && Date.now() - start <= 6500 ? await search(p,{variantId:smaller.id,limit:1,strategy},signal,600) : undefined;
+              trials += checkedSmaller?.trials || 0;
+              // A sectional is an optional, shape-specific choice. If its return
+              // cannot be placed cleanly but a straight sofa can, retain the
+              // usable seating rather than leaving an awkward corner footprint.
+              if (v.geometry && smaller && checkedSmaller?.found[0]) {
+                const c = checkedSmaller.found[0], straight = fromVariant(smaller.id, `planned-${p.id}-${p.revision}-${smaller.id}-fallback-${requestIndex + 1}`);
+                Object.assign(straight, { originCell: c.originCell, rotation: c.rotation });
+                p.layout.furniture.push(straight);
+                p.omitted.push({ variantId, reason: `Corner sofa omitted: its return could not be placed cleanly. Placed ${smaller.name} instead.`, alternativeVariantId: smaller.id, alternativeChecked: { trials: checkedSmaller.trials, placementStatus: 'valid', layoutStatus: c.layoutStatus, proposalRevision: p.revision, ruleRevision: state.ruleRevision } });
+                continue;
+              }
+              const protectedWindow = v.kind === 'chair' && p.room.openings.some(opening => opening.kind === 'window' && opening.windowAccess);
+              p.omitted.push({ variantId, reason: protectedWindow ? 'No suitable chair fits while preserving the configured window clearance.' : `No placement found in this bounded greedy scan. ${p.rules.requiredKinds.includes(v.kind) ? 'This required function is still missing.' : 'Optional piece omitted.'} Not proof of infeasibility.`, ...(smaller && checkedSmaller?.found[0] ? { alternativeVariantId: smaller.id, alternativeChecked: { trials:checkedSmaller.trials, placementStatus:'valid', layoutStatus:checkedSmaller.found[0].layoutStatus, proposalRevision:p.revision, ruleRevision:state.ruleRevision } } : {}) });
+            }
           }
           if (signal?.aborted) fail('cancelled', 'Planning cancelled without committing.'); guard(a, 'layout'); result = commit(p, { planner: { kind: 'deterministic_bounded_greedy', strategy, trials, elapsedMs: Date.now() - start, complete: validate(p.layout, p.room, p.rules, state.inventory).validation.hardFailures === 0 && validate(p.layout, p.room, p.rules, state.inventory).brief.status === 'satisfied' } });
           return result;
@@ -593,7 +649,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
       const p = state.proposal || fail('proposal_not_found', 'No active proposal.');
       guard({ proposalId: p.id, revision: p.revision }, 'layout');
       const next = clone(state), o = next.proposal!.layout.furniture.find(f => f.id === id) || fail('invalid_id', 'Piece not found.');
-      if (o.ownership !== 'catalogue' && o.ownership !== 'custom') fail('lock_violation', 'Change owned locks in Yours. The draft will become stale.');
+      if (o.ownership !== 'catalogue' && o.ownership !== 'custom') fail('lock_violation', 'Change owned locks in Yours; this proposal remains an independent branch.');
       o.locked = o.ownership === 'custom' ? { ...clone(locks), size: true } : clone(locks); next.proposal!.revision++; publish(next); return envelope(next.proposal!);
     }
     const next = clone(state), o = next.current.furniture.find(o => o.id === id) || fail('invalid_id', 'Select a piece in Yours to change its locks.');
@@ -648,7 +704,22 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (which === 'current') next.currentRevision++; else next.proposal!.revision++;
     publish(next); return which === 'proposal' ? envelope(next.proposal!) : { operationSucceeded: true, currentRevision: state.currentRevision };
   });
-  const applyProposal = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'layout'), report = validate(p.layout, p.room, p.rules, state.inventory); if (report.validation.hardFailures || report.brief.status !== 'satisfied') fail('blocked_apply', 'Resolve hard failures and complete the active room brief before Apply.'); const next = clone(state); next.current = clone(p.layout); next.currentRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, currentRevision: state.currentRevision, ...(report.conceptualOnly ? { conceptualOnly: true } : {}) }; });
+  const applyProposal = (proposalId: string, revision: number, choices: Record<string, ReconciliationChoice> = {}) => human(() => {
+    const p = guard({ proposalId, revision }, 'layout');
+    const merged = reconcileLayout(p.baseLayout || state.current, state.current, p.layout, choices);
+    if (merged.conflicts.length) return {
+      operationSucceeded: false,
+      error: { code: 'reconciliation_required', message: 'This proposal was designed from an earlier arrangement. Choose Yours or Proposal for each overlapping change before applying.' },
+      conflicts: merged.conflicts.map(conflict => ({ key: conflict.key, label: conflict.label, yours: conflict.yours ? { id: conflict.yours.id, label: conflict.yours.label } : null, proposal: conflict.proposal ? { id: conflict.proposal.id, label: conflict.proposal.label } : null })),
+      proposalId: p.id, revision: p.revision,
+    };
+    // A layout proposal never replaces current room inputs. Revalidate the
+    // reconciled furniture against the latest human room, openings and rules.
+    const report = validate(merged.layout, state.room, state.rules, state.inventory);
+    if (report.validation.hardFailures || report.brief.status !== 'satisfied') fail('blocked_apply', 'The reconciled layout does not fit the latest room or rules. Resolve the listed issues before Apply.');
+    const next = clone(state); next.current = clone(merged.layout); next.currentRevision++; next.proposal = null; publish(next);
+    return { operationSucceeded: true, currentRevision: state.currentRevision, reconciled: p.baseCurrentRevision !== state.currentRevision - 1 || p.baseRuleRevision !== state.ruleRevision, ...(report.conceptualOnly ? { conceptualOnly: true } : {}) };
+  });
   const confirmSetup = (proposalId: string, revision: number) => human(() => { const p = guard({ proposalId, revision }, 'setup'); const inputError = validateRoomInputs(p.room, p.rules); if (inputError) fail('invalid_room_inputs', inputError); checkRules(p.rules); const next = clone(state); next.room = clone(p.room); next.rules = clone(p.rules); next.ruleRevision++; next.proposal = null; publish(next); return { operationSucceeded: true, ruleRevision: state.ruleRevision, validation: validate(next.current, next.room, next.rules, next.inventory).validation }; });
   const discardProposal = () => { const next = clone(state); next.proposal = null; publish(next); return { operationSucceeded: true }; };
   /** Human-invoked local comparison. Each strategy runs in an isolated store,
@@ -690,7 +761,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (alternative.baseCurrentRevision !== state.currentRevision || alternative.baseRuleRevision !== state.ruleRevision) fail('revision_conflict', 'Current or the accepted rules changed. Run the comparison again.');
     if (alternative.report.validation.hardFailures) fail('blocked_strategy', 'A strategy with hard failures cannot become the review proposal.');
     const next = clone(state); next.sequence++;
-    next.proposal = { id: `proposal-${next.sequence}`, kind: 'layout', revision: 1, baseCurrentRevision: state.currentRevision, baseRuleRevision: state.ruleRevision, layout: clone(alternative.layout), room: clone(alternative.room), rules: clone(alternative.rules), omitted: clone(alternative.omitted) };
+    next.proposal = { id: `proposal-${next.sequence}`, kind: 'layout', revision: 1, baseCurrentRevision: state.currentRevision, baseRuleRevision: state.ruleRevision, baseLayout: clone(state.current), layout: clone(alternative.layout), room: clone(alternative.room), rules: clone(alternative.rules), omitted: clone(alternative.omitted) };
     publish(next); strategyAlternatives.clear();
     return envelope(next.proposal, { message: `${alternative.label} is now the Proposal. It has not been applied; compare it with Yours and leave Apply to the human.` });
   });
@@ -698,10 +769,10 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (expectedStamp !== roomEditStamp(state)) fail('revision_conflict', 'The room or proposal changed while this editor was open. Close and reopen it before staging.');
     const error = validateRoomInputs(room, rules); if (error) fail('invalid_room_inputs', error);
     const active = state.proposal;
-    const canUpdate = active?.kind === 'setup' && proposalStatus(state) !== 'stale';
+    const canUpdate = active?.kind === 'setup';
     if (active && !canUpdate && !replaceProposal) fail('active_proposal_exists', 'Explicitly replace the active proposal before staging these room inputs.');
     const next = clone(state); next.sequence++;
-    const p: Proposal = canUpdate ? clone(active) : { id: `proposal-${next.sequence}`, kind: 'setup', revision: 0, baseCurrentRevision: state.currentRevision, baseRuleRevision: state.ruleRevision, layout: clone(state.current), room: clone(room), rules: clone(rules), omitted: [] };
+    const p: Proposal = canUpdate ? clone(active) : { id: `proposal-${next.sequence}`, kind: 'setup', revision: 0, baseCurrentRevision: state.currentRevision, baseRuleRevision: state.ruleRevision, baseLayout: clone(state.current), layout: clone(state.current), room: clone(room), rules: clone(rules), omitted: [] };
     p.room = clone(room); p.rules = clone(rules); p.revision++; next.proposal = p; publish(next);
     return envelope(p, { message: 'Room inputs staged. Review and confirm to update Yours.' });
   });
@@ -716,7 +787,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     catch { fail('invalid_room', 'That saved room could not be read. Export it before continuing.'); }
     // Saved samples can share both IDs and revision numbers. Refresh authority
     // on every entry (including A → B → A) and clear retries before publishing.
-    // Content and stale-draft status survive; queued commands and Apply do not.
+    // Content survives; queued commands and captured Apply buttons do not.
     const target = restored(loaded);
     // Sample libraries each keep their own storage key, so two documents can share
     // the id 'original'. Only retain the outgoing one when it is genuinely distinct.

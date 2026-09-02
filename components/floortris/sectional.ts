@@ -118,7 +118,8 @@ export function modulesOverlap(a: SectionalModule, b: SectionalModule): boolean 
 
 export function sectionalGeometryError(geometry: SectionalGeometry, expected?: { w: number; d: number; h: number | null }): string | null {
   if (!geometry || geometry.type !== 'sectional' || !['north', 'east', 'south', 'west'].includes(geometry.primaryFacing) || !Array.isArray(geometry.modules)) return 'Sectional geometry is unsupported.';
-  if (Object.keys(geometry).some(key => !['type', 'primaryFacing', 'modules'].includes(key))) return 'Sectional geometry contains unsupported data.';
+  if (Object.keys(geometry).some(key => !['type', 'primaryFacing', 'chaiseSide', 'modules'].includes(key))) return 'Sectional geometry contains unsupported data.';
+  if (geometry.chaiseSide && !['left', 'right'].includes(geometry.chaiseSide)) return 'Sectional chaise side is unsupported.';
   if (geometry.modules.length < 2 || geometry.modules.length > SECTIONAL_MAX_MODULES) return `A sectional needs 2–${SECTIONAL_MAX_MODULES} modules.`;
   const ids = new Set<string>();
   for (const section of geometry.modules) {

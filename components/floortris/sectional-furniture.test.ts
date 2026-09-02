@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { readFileSync } from 'node:fs';
 import { createStore } from './store.ts';
-import { DEFAULT_RULES } from './data.ts';
+import { DEFAULT_RULES, fromVariant } from './data.ts';
 import { makeCustomFurniture } from './custom-furniture.ts';
 import { validate } from './sectional-engine.ts';
 import { sectionalGeometryError, sectionalEnvelope, sectionalVisualPlan, transformedModuleRect } from './sectional.ts';
@@ -47,6 +47,21 @@ test('strict module geometry accepts genuine connected L and U assemblies', () =
   assert.equal(sectionalGeometryError(U, { w: 400, d: 240, h: 85 }), null);
   assert.equal(sectionalGeometryError(L, { w: 240, d: 240, h: 85 }), null);
   assert.deepEqual(sectionalEnvelope(U), { w: 400, d: 240, h: 85 });
+});
+
+test('standard corner sofa variants keep handed module unions through every rotation', () => {
+  const left = fromVariant('arc-corner-240', 'left'), right = fromVariant('arc-corner-right-240', 'right');
+  assert.equal(left.geometry?.chaiseSide, 'left'); assert.equal(right.geometry?.chaiseSide, 'right');
+  assert.equal(sectionalGeometryError(left.geometry!, left.sizeCm), null);
+  assert.equal(sectionalGeometryError(right.geometry!, right.sizeCm), null);
+  assert.notDeepEqual(left.geometry!.modules.map(module => [module.xCm, module.yCm]), right.geometry!.modules.map(module => [module.xCm, module.yCm]));
+  for (const rotation of [0, 90, 180, 270] as const) {
+    left.rotation = rotation; right.rotation = rotation;
+    const leftUnion: { x: number; y: number; w: number; d: number }[] = left.geometry!.modules.map(module => transformedModuleRect(left, module));
+    const rightUnion: { x: number; y: number; w: number; d: number }[] = right.geometry!.modules.map(module => transformedModuleRect(right, module));
+    assert.equal(leftUnion.length, 2); assert.equal(rightUnion.length, 2);
+    assert.notDeepEqual(leftUnion, rightUnion, `handed union remains distinct at ${rotation}°`);
+  }
 });
 
 test('sectional geometry rejects overlap, islands, wrong envelope and unsafe extra data', async () => {
@@ -176,4 +191,11 @@ test('2D board exposes a dedicated continuous CUSTOM SECTIONAL renderer and modu
   const css = readFileSync(new URL('./floortris.css', import.meta.url), 'utf8');
   assert.match(source, /function SectionalShape/); assert.match(source, /CUSTOM SECTIONAL/); assert.match(source, /module\.widthCm/);
   assert.match(css, /\.ft-sectional-module/); assert.match(css, /\.ft-sectional-junction/); assert.match(css, /\.ft-sectional-connector-back/); assert.match(css, /\.ft-sectional-arm/);
+});
+
+test('owned furniture keeps its 2D label in the drag preview layer', () => {
+  const source = readFileSync(new URL('./FloortrisApp.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('./floortris.css', import.meta.url), 'utf8');
+  assert.match(source, /draggingId/); assert.match(source, /ft-is-dragging/); assert.match(source, /shown\.ownership==='owned'\?'YOUR '/);
+  assert.match(css, /\.ft-furniture\.ft-is-dragging \.ft-item-label\{display:block!important;opacity:1!important;z-index:24/);
 });

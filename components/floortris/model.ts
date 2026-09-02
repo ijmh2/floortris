@@ -18,7 +18,7 @@ export type SectionalModule = { id: string; type: SectionalModuleType; xCm: numb
 /** Local module coordinates are normalized to the unrotated measured envelope.
  * Parent rotation moves the complete union; primaryFacing alone controls the
  * TV and coffee-table relationship. */
-export type SectionalGeometry = { type: 'sectional'; primaryFacing: Wall; modules: SectionalModule[] };
+export type SectionalGeometry = { type: 'sectional'; primaryFacing: Wall; /** The return when seated facing primaryFacing.  This is deliberately independent of rotation. */ chaiseSide?: 'left' | 'right'; modules: SectionalModule[] };
 export type RoomProfile =
   | { kind: 'lounge' }
   | { kind: 'bedroom'; sleeping: 'single' | 'double' | 'king'; workspace: boolean; storage: boolean; bedsideQuantity?: number }
@@ -63,7 +63,8 @@ export type Room = { name: string; widthCm: number; depthCm: number; floorPlan?:
 export type Rules = { cellCm: 20; H_lowCm: number; walkHardCm: number; walkPreferredCm: number; storageFrontCm: number; chairPullCm: number; bedLongSideAccessCm: number; radiatorFrontCm: number; windowFrontCm: number; ceilingCm: number; requiredKinds: Kind[]; deskNearWindow: boolean; openFloorM2: number; accessibility?: AccessibilityPlanningPack };
 export type Layout = { furniture: Furniture[]; appearance: { wall: string; floor: string } };
 export type Omission = { objectId?: string; variantId?: string; reason: string; alternativeVariantId?: string; alternativeChecked?: { trials: number; placementStatus: string; layoutStatus: string; proposalRevision: number; ruleRevision: number } };
-export type Proposal = { id: string; kind: 'layout' | 'setup'; revision: number; baseCurrentRevision: number; baseRuleRevision: number; layout: Layout; room: Room; rules: Rules; omitted: Omission[] };
+/** A proposal is a branch, not a lock on Yours. baseLayout is the immutable common ancestor used at Apply. */
+export type Proposal = { id: string; kind: 'layout' | 'setup'; revision: number; baseCurrentRevision: number; baseRuleRevision: number; /** Absent only in legacy saved documents; migrateState fills it. */ baseLayout?: Layout; layout: Layout; room: Room; rules: Rules; omitted: Omission[] };
 export type AppState = { version: 1 | 2; documentId?: string; currentRevision: number; ruleRevision: number; current: Layout; room: Room; rules: Rules; inventory: Furniture[]; proposal: Proposal | null; sequence: number };
 export type HeightClass = 'FREE' | 'LOW' | 'TALL' | 'UNKNOWN_HEIGHT';
 /** Checked repair or bounded-search suggestion. The store binds active proposal

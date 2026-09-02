@@ -50,13 +50,26 @@ test('undo Apply restores the review draft with new authority; captured Apply an
   assert.deepEqual(store.getState().current, p.layout);
 });
 
-test('history restores stale drafts as stale; human edits cannot rebase them', () => {
+test('history restores independent drafts; human edits on Yours do not freeze them', () => {
   const store = createStore(makeCompactRoom());
   store.humanAdd('current', 'fern-40'); store.discardProposal(); store.undo();
-  assert.equal(proposalStatus(store.getState()), 'stale');
-  assert.equal(store.humanAdd('proposal', 'fern-40').error?.code, 'stale_proposal');
-  assert.equal(store.humanSetRoomFinish('proposal', 'wall', 'chalk').error?.code, 'stale_proposal');
-  store.undo(); assert.equal(proposalStatus(store.getState()), 'ready_for_review');
+  assert.equal(proposalStatus(store.getState()), 'ready_for_review');
+  assert.equal(store.humanAdd('proposal', 'fern-40').operationSucceeded, true);
+  assert.equal(store.humanSetRoomFinish('proposal', 'wall', 'stone').operationSucceeded, true);
+  store.undo(); assert.notEqual(proposalStatus(store.getState()), 'none');
+});
+
+test('Apply reconciles overlapping branch edits explicitly and preserves the selected result', () => {
+  const store = createStore(makeCompactRoom());
+  assert.equal(store.humanSetRoomFinish('current', 'wall', 'stone').operationSucceeded, true);
+  assert.equal(store.humanSetRoomFinish('proposal', 'wall', 'cream').operationSucceeded, true);
+  const changed = store.getState().proposal!;
+  const required = store.applyProposal(changed.id, changed.revision);
+  assert.equal(required.error?.code, 'reconciliation_required');
+  assert.ok((required.conflicts as { key: string }[]).some(conflict => conflict.key === 'appearance:wall'));
+  const applied = store.applyProposal(changed.id, changed.revision, { 'appearance:wall': 'proposal' });
+  assert.equal(applied.operationSucceeded, true);
+  assert.equal(store.getState().current.appearance.wall, 'cream');
 });
 
 test('undo invalidates cached idempotency results and checked candidates', async () => {
@@ -198,11 +211,11 @@ test('room switching rejects in-flight planning and clears replay and candidate 
   assert.deepEqual(store.getState(),opened);
 });
 
-test('opening stale drafts preserves staleness and invalidates old current revisions',async()=>{
+test('opening a saved proposal preserves its independent branch and invalidates old current revisions',async()=>{
   const {makeBedroomDouble,makeHomeOffice}=await import('./samples.ts');
   const stale=makeBedroomDouble();stale.currentRevision++;
   const store=createStore(makeHomeOffice());store.humanOpenRoom(stale);
-  assert.equal(proposalStatus(store.getState()),'stale');
+  assert.equal(proposalStatus(store.getState()),'ready_for_review');
   assert.deepEqual(store.getState().proposal!.layout,stale.proposal!.layout);
   const blank=makeHomeOffice();blank.proposal=null;
   store.humanOpenRoom(blank);

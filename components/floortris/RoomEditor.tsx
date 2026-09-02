@@ -3,7 +3,7 @@ import { bounds, validate, wallBand } from './sectional-engine.ts';
 import { wallSnap } from './interactions.ts';
 import { clone, type AppState, type CommandResult, type Furniture, type Opening, type Room, type Rules, type Wall } from './model.ts';
 import { horizontalWall, radiatorMeasures, radiatorOnWall, roomEditStamp, validateRoomInputs, wallLength, walls } from './room-inputs.ts';
-import { proposalStatus, type FloortrisStore } from './store.ts';
+import { type FloortrisStore } from './store.ts';
 import { profileRules } from './samples.ts';
 import { conceptClearance, conceptOnWall } from './fixture-geometry.ts';
 import { planClipPath, wallSegments } from './floorplan.ts';
@@ -31,7 +31,7 @@ export default function RoomEditor({ state, store, onResult, close }: { state: A
   const inputError = useMemo(() => validateRoomInputs(room, rules), [room, rules]);
   const conflict = stamp !== roomEditStamp(state);
   const p = state.proposal?.kind === 'setup' ? state.proposal : null;
-  const needsReplace = !!state.proposal && (!p || proposalStatus(state) === 'stale');
+  const needsReplace = !!state.proposal && !p;
   const stagedMatches = !!p && !conflict && JSON.stringify(p.room) === JSON.stringify(room) && JSON.stringify(p.rules) === JSON.stringify(rules);
   const report = useMemo(() => p ? validate(p.layout, p.room, p.rules, state.inventory) : null, [p, state.inventory]);
 
@@ -220,7 +220,7 @@ export default function RoomEditor({ state, store, onResult, close }: { state: A
       <details><summary>All staged measurements and pins</summary><pre>{JSON.stringify({ room: p.room, rules: p.rules }, null, 2)}</pre></details>
       <p>{report?.validation.hardFailures || 0} layout conflicts · {report?.validation.warnings || 0} warnings with these inputs. Confirming measurements can reveal furniture that needs rearranging.</p>
       {!stagedMatches && <p className="ft-room-error">Stage your latest edits before confirming. An older draft cannot confirm unseen changes.</p>}
-      <button className="ft-button ft-primary" disabled={!stagedMatches || proposalStatus(state) === 'stale' || !!inputError} onClick={() => { const result = store.confirmSetup(p.id, p.revision); onResult(result); if (result.operationSucceeded) close(); }}>Confirm room inputs · revision {p.revision}</button>
+      <button className="ft-button ft-primary" disabled={!stagedMatches || !!inputError} onClick={() => { const result = store.confirmSetup(p.id, p.revision); onResult(result); if (result.operationSucceeded) close(); }}>Confirm room inputs · revision {p.revision}</button>
     </div>}
   </section></div>;
 }

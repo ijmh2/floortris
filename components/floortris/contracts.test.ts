@@ -261,7 +261,7 @@ test('proposal pins protect new catalogue pieces while owned lock authority rema
   assert.equal(store.humanSetLocks(id,{},'proposal').operationSucceeded,true);
   const stamp=editStamp(store.getState(),'proposal');store.humanSetRoomFinish('current','wall','stone');
   assert.notEqual(editStamp(store.getState(),'proposal'),stamp);
-  assert.equal(store.humanSetLocks(id,{position:true},'proposal').error?.code,'stale_proposal');
+  assert.equal(store.humanSetLocks(id,{position:true},'proposal').operationSucceeded,true);
 });
 
 test('the tool log records every native call, including refusals, without leaking arguments',async()=>{
@@ -404,14 +404,14 @@ test('repair moves check window envelopes and owned locks, not just solid overla
   assert.equal(locked.issues.find(i=>i.code==='prefer_flush_to_wall')!.fix,undefined);
 });
 
-test('current, setup, and stale reports never offer a mutation against another draft',async()=>{
+test('current and setup reports never offer a mutation, while an independent layout proposal remains editable',async()=>{
   const state=await repairRoom();state.current=clone(state.proposal!.layout);
   const store=createStore(state);
   const current=await store.execute('checkLayout',{which:'current',detail:'issues'});
   assert.ok((current.issues as import('./model.ts').Issue[]).length>0);
   assert.ok((current.issues as import('./model.ts').Issue[]).every(i=>!i.fix));
-  for(const variant of ['setup','stale']) {
-    const s=clone(state);if(variant==='setup')s.proposal!.kind='setup';else s.currentRevision++;
+  for(const variant of ['setup']) {
+    const s=clone(state);if(variant==='setup')s.proposal!.kind='setup';
     const report=await createStore(s).execute('checkLayout',{which:'proposal',detail:'issues'});
     assert.ok((report.issues as import('./model.ts').Issue[]).every(i=>!i.fix));
   }
