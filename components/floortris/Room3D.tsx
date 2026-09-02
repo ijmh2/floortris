@@ -19,6 +19,10 @@ export default function Room3D(props: Props) {
     catch { queueMicrotask(() => setError('3D is unavailable in this browser. Your room and all editing tools are still available in 2D.')); return; }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setClearColor('#eef1e9'); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // The room and its lights are static while the camera orbits. Rebuilding a
+    // 2048px shadow map on every controls change was the dominant interaction
+    // cost, so update it only when scene geometry or cutaway visibility changes.
+    renderer.shadowMap.autoUpdate = false;
     renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.18;
     renderer.domElement.setAttribute('aria-label', `${latest.current.title} interactive 3D room`);
     renderer.domElement.setAttribute('role','img'); el.appendChild(renderer.domElement);
@@ -30,7 +34,7 @@ export default function Room3D(props: Props) {
     const fill = new THREE.DirectionalLight('#e1eceb',1.1);scene.add(fill);
     let disposed = false, frame = 0;
     const rt: Runtime = { renderer,scene,camera,controls,model:null,highlight:null,room:latest.current.room,cutaway:true,
-      render: () => { if(disposed||frame)return;frame=requestAnimationFrame(()=>{frame=0;if(disposed)return;if(rt.model)updateCutaway(rt.model,camera,rt.room,rt.cutaway);renderer.render(scene,camera);}); },
+      render: () => { if(disposed||frame)return;frame=requestAnimationFrame(()=>{frame=0;if(disposed)return;if(rt.model&&updateCutaway(rt.model,camera,rt.room,rt.cutaway))renderer.shadowMap.needsUpdate=true;renderer.render(scene,camera);}); },
       reset: () => {
         const w=rt.room.widthCm/100,d=rt.room.depthCm/100,span=Math.max(w,d),height=latest.current.rules.ceilingCm/100;
         controls.target.set(w/2,height*.48,d/2);camera.position.set(w/2+span*.95,height*1.27+span*.82,d/2+span*1.15);camera.zoom=1;
@@ -38,7 +42,7 @@ export default function Room3D(props: Props) {
         camera.left=-size*aspect/2;camera.right=size*aspect/2;camera.top=size/2;camera.bottom=-size/2;camera.updateProjectionMatrix();controls.update();
         sun.position.set(-span*.45,height+span*.9,-span*.25);sun.target.position.set(w/2,0,d/2);
         Object.assign(sun.shadow.camera,{left:-span,right:span,top:span,bottom:-span,near:.1,far:span*5+height});sun.shadow.camera.updateProjectionMatrix();
-        fill.position.set(w+span,height+span,d+span);rt.render();
+        fill.position.set(w+span,height+span,d+span);renderer.shadowMap.needsUpdate=true;rt.render();
       },
       zoom: factor => {camera.zoom=THREE.MathUtils.clamp(camera.zoom*factor,controls.minZoom,controls.maxZoom);camera.updateProjectionMatrix();rt.render();},
       select: id => {
@@ -78,7 +82,7 @@ export default function Room3D(props: Props) {
     rt.room=props.room;rt.model=buildRoomScene(props.room,props.layout,props.rules, {
       onTextureLoad: () => { if (active) rt.render(); },
       onTextureError: () => { if (active) queueMicrotask(() => { if (active) setTextureWarning(true); }); },
-    });rt.scene.add(rt.model.root);rt.select(latest.current.selected);if(resized)rt.reset();rt.render();
+    });rt.scene.add(rt.model.root);rt.renderer.shadowMap.needsUpdate=true;rt.select(latest.current.selected);if(resized)rt.reset();rt.render();
     return () => { active = false; };
   },[props.room,props.layout,props.rules]);
   useEffect(()=>{runtime.current?.select(props.selected);},[props.selected]);

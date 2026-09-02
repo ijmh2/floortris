@@ -527,10 +527,13 @@ export function buildRoomScene(room: Room, layout: Layout, rules: Rules, texture
   for (const item of [...room.fixtures,...layout.furniture]) { const piece=buildFurniture(item,room,rules.cellCm);pieces.set(item.id,piece);root.add(piece); }
   return {root,walls,pieces};
 }
-export function updateCutaway(scene: RoomScene, camera: THREE.Camera, room: Room, enabled: boolean) {
+export function updateCutaway(scene: RoomScene, camera: THREE.Camera, room: Room, enabled: boolean): boolean {
+  let changed = false;
   for (const group of scene.walls.values()) {
     const wall = group.userData.wall as Wall;
     const near = wall==='north'?camera.position.z<room.depthCm/200:wall==='south'?camera.position.z>room.depthCm/200:wall==='west'?camera.position.x<room.widthCm/200:camera.position.x>room.widthCm/200;
-    group.visible = !enabled || !near;
+    const visible = !enabled || !near;
+    if (group.visible !== visible) { group.visible = visible; changed = true; }
   }
+  return changed;
 }

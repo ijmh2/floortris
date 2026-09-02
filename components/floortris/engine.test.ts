@@ -141,9 +141,10 @@ test('3D wall TVs use wall anchors and elevation, while the radiator keeps its l
 test('3D scene and camera cutaway never mutate room data or validation',()=>{
   const s=makeCompactRoom(),before=JSON.stringify(s),p=s.proposal!,r=validate(p.layout,p.room,p.rules,s.inventory);
   const scene=buildRoomScene(p.room,p.layout,p.rules),camera=new PerspectiveCamera();camera.position.set(6,5,6);
-  assert.equal(scene.pieces.size,8);updateCutaway(scene,camera,p.room,true);
+  assert.equal(scene.pieces.size,8);assert.equal(updateCutaway(scene,camera,p.room,true),true);
   assert.equal(scene.walls.get('south')!.visible,false);assert.equal(scene.walls.get('east')!.visible,false);assert.equal(scene.walls.get('north')!.visible,true);assert.equal(scene.walls.get('west')!.visible,true);
-  updateCutaway(scene,camera,p.room,false);assert.ok([...scene.walls.values()].every(w=>w.visible));
+  assert.equal(updateCutaway(scene,camera,p.room,true),false);
+  assert.equal(updateCutaway(scene,camera,p.room,false),true);assert.ok([...scene.walls.values()].every(w=>w.visible));
   assert.equal(JSON.stringify(s),before);assert.deepEqual(validate(p.layout,p.room,p.rules,s.inventory),r);disposeObject(scene.root);
   const unknown=clone(s.inventory[0]);unknown.sizeCm.h=null;const mesh=buildFurniture(unknown,s.room);assert.equal(mesh.userData.heightUnknown,true);assert.equal(unknown.sizeCm.h,null);disposeObject(mesh);
 });
