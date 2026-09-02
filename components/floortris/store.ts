@@ -199,7 +199,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     for (const property of ['originCell', 'rotation', 'wallAnchor']) if (a[property] !== undefined && !same(a[property], (c as unknown as Record<string, unknown>)[property])) fail('invalid_candidate', 'Do not override a checked candidate placement.');
     return { originCell: clone(c.originCell), rotation: c.rotation, ...(c.variantId ? { variantId: c.variantId } : {}), ...(c.linkedDeskId ? { linkedDeskId: c.linkedDeskId } : {}), ...(c.attachedOpeningId ? { attachedOpeningId: c.attachedOpeningId } : {}), ...(c.supportObjectId ? { supportObjectId: c.supportObjectId } : {}), ...(c.lightingZone ? { lightingZone: c.lightingZone } : {}), ...(c.wallAnchor ? { wallAnchor: clone(c.wallAnchor) } : {}) };
   };
-  async function search(p: Proposal, a: Args, signal?: AbortSignal, timeLimit = 1800): Promise<{ found: Candidate[]; trials: number; exhausted: boolean }> {
+  async function search(p: Proposal, a: Args, signal?: AbortSignal): Promise<{ found: Candidate[]; trials: number; exhausted: boolean }> {
     const existing = a.objectId ? p.layout.furniture.find(o => o.id === a.objectId) || fail('invalid_id', 'Object not found in this proposal.') : undefined;
     if (!existing && !a.variantId) fail('invalid_arguments', 'Supply objectId or variantId.');
     if (a.variantId && !variantApprovedForRoom(p.room, a.variantId)) fail('provider_restriction', 'That product is not in this accommodation pack’s approved measured inventory.');
@@ -212,7 +212,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (a.lightingZone) piece.lightingZone = a.lightingZone;
     piece = normalizeFixturePlacement(piece, p.room, p.rules, p.layout, !!a.supportObjectId);
     const base = validate(p.layout, p.room, p.rules, state.inventory, false), baseBlocks = new Set(base.issues.filter(i => i.severity === 'block').map(issueSignature)), baseIssues = new Set(base.issues.map(issueSignature));
-    const found: Candidate[] = [], positions: HumanPatch[] = [], seen = new Set<string>(), started = Date.now(); let trials = 0;
+    const found: Candidate[] = [], positions: HumanPatch[] = [], seen = new Set<string>(); let trials = 0;
     const unit = p.rules.cellCm, cols = Math.floor(p.room.widthCm / unit), rows = Math.floor(p.room.depthCm / unit), requestedLimit = a.limit || 5, candidatePool = Math.min(24, Math.max(12, requestedLimit * 4));
     const locks = authoritative(piece).locked;
     if (piece.kind === 'window_treatment') {
@@ -301,7 +301,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     }
     for (const patch of positions) {
       if (signal?.aborted) fail('cancelled', 'Search cancelled without committing.');
-      if (trials >= 160 || Date.now() - started > timeLimit || found.length >= candidatePool) break;
+      if (trials >= 160 || found.length >= candidatePool) break;
       const signature = JSON.stringify(patch); if (seen.has(signature)) continue; seen.add(signature);
       if (locks.position && ((patch.originCell && !same(patch.originCell, authoritative(piece).originCell)) || (patch.wallAnchor && !same(patch.wallAnchor, authoritative(piece).wallAnchor)))) continue;
       if (locks.rotation && patch.rotation !== authoritative(piece).rotation) continue;
@@ -333,7 +333,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
     if (signal?.aborted) fail('cancelled', 'Search cancelled without committing.');
     found.sort((a, b) => (candidateStrategyCosts.get(a.candidateId) || a.qualityScore) - (candidateStrategyCosts.get(b.candidateId) || b.qualityScore) || a.remainingIssueCount - b.remainingIssueCount || a.originCell.y - b.originCell.y || a.originCell.x - b.originCell.x || a.rotation - b.rotation);
     for (const candidate of found.slice(requestedLimit)) candidateReports.delete(candidate.candidateId);
-    return { found: found.slice(0, requestedLimit), trials, exhausted: trials >= 160 || Date.now() - started > timeLimit };
+    return { found: found.slice(0, requestedLimit), trials, exhausted: trials >= 160 };
   }
   const snapshot = (a: Args) => {
     if (a.which === 'current') { if (a.revision !== undefined && a.revision !== state.currentRevision) fail('revision_conflict', 'Current has changed.'); return { layout: state.current, room: state.room, rules: state.rules, revision: state.currentRevision, which: 'current' }; }
@@ -466,8 +466,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
           let trials = 0; const start = Date.now();
           for (const object of [...p.layout.furniture]) {
             const report = validate(p.layout, p.room, p.rules, state.inventory); if (!report.issues.some(i => i.severity === 'block' && i.objectIds.includes(object.id))) continue;
-            if (Date.now() - start > 6500) break;
-            const found = await search(p, { objectId: object.id, limit: 1, strategy }, signal, 900); trials += found.trials;
+            const found = await search(p, { objectId: object.id, limit: 1, strategy }, signal); trials += found.trials;
             if (found.found[0]) { const c = found.found[0]; const patch = { originCell: c.originCell, rotation: c.rotation, ...(c.wallAnchor ? { wallAnchor: c.wallAnchor } : {}), ...(c.attachedOpeningId ? { attachedOpeningId: c.attachedOpeningId } : {}), ...(c.supportObjectId ? { supportObjectId: c.supportObjectId } : {}) }; p.layout.furniture = p.layout.furniture.map(o => o.id === object.id ? checkPatch(o, patch, p.layout, p.room, p.rules) : o); }
           }
           for (const [requestIndex, variantId] of wanted.entries()) {
@@ -493,7 +492,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
               : v.kind === 'table_lamp' ? { supportObjectId: p.layout.furniture.find(canSupportLamp)?.id } : {};
             if (v.kind === 'window_treatment' && !relationArgs.attachedOpeningId) { p.omitted.push({ variantId, reason: 'Window treatment omitted: this room has no window to attach it to.' }); continue; }
             if (v.kind === 'table_lamp' && !('supportObjectId' in relationArgs && relationArgs.supportObjectId)) { p.omitted.push({ variantId, reason: 'Table lamp omitted: no table, desk or cabinet is present to support it.' }); continue; }
-            const found = Date.now() - start > 6500 ? { found: [] as Candidate[], trials: 0 } : await search(p, { variantId, limit: 1, strategy, ...relationArgs }, signal, 1100); trials += found.trials;
+            const found = await search(p, { variantId, limit: 1, strategy, ...relationArgs }, signal); trials += found.trials;
             if (found.found[0]) {
               const c = found.found[0], object = fromVariant(variantId, `planned-${p.id}-${p.revision}-${variantId}-${requestIndex + 1}`);
               Object.assign(object, { originCell: c.originCell, rotation: c.rotation, ...(c.attachedOpeningId ? {attachedOpeningId:c.attachedOpeningId} : {}), ...(c.supportObjectId ? {supportObjectId:c.supportObjectId} : {}), ...(c.lightingZone ? {lightingZone:c.lightingZone} : {}) }); if (c.wallAnchor) object.wallAnchor = c.wallAnchor;
@@ -505,7 +504,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
               // reserve the desk, then test and link its chair before retaining it.
               if (object.kind === 'desk' && linkedChairVariant && !p.layout.furniture.some(chair => chair.kind === 'chair' && chair.linkedDeskId === object.id)) {
                 const chairVariant = linkedChairVariant;
-                const chair = await search(p, { variantId: chairVariant, linkedDeskId: object.id, limit: 1, strategy }, signal, 900); trials += chair.trials;
+                const chair = await search(p, { variantId: chairVariant, linkedDeskId: object.id, limit: 1, strategy }, signal); trials += chair.trials;
                 if (chair.found[0]) { const cc = chair.found[0], linked = fromVariant(chairVariant, `planned-${p.id}-${p.revision}-${chairVariant}-linked-${requestIndex + 1}`); Object.assign(linked, { originCell: cc.originCell, rotation: cc.rotation, linkedDeskId: object.id }); p.layout.furniture.push(linked); }
                 else { p.layout.furniture = p.layout.furniture.filter(o => o.id !== object.id); p.omitted.push({ variantId, reason: 'Desk omitted because no linked chair could be placed in the same bounded work arrangement.' }); }
               }
@@ -513,7 +512,7 @@ export function createStore(initialState: AppState = makeDemo(), options: { befo
             else {
               const relational = v.kind === 'window_treatment' || v.kind === 'table_lamp';
               const smaller = !relational && CATALOGUE.filter(x => x.kind === v.kind && x.sizeCm.w * x.sizeCm.d < v.sizeCm.w * v.sizeCm.d).sort((a, b) => b.sizeCm.w * b.sizeCm.d - a.sizeCm.w * a.sizeCm.d)[0];
-              const checkedSmaller = smaller && Date.now() - start <= 6500 ? await search(p,{variantId:smaller.id,limit:1,strategy},signal,600) : undefined;
+              const checkedSmaller = smaller ? await search(p,{variantId:smaller.id,limit:1,strategy},signal) : undefined;
               trials += checkedSmaller?.trials || 0;
               // A sectional is an optional, shape-specific choice. If its return
               // cannot be placed cleanly but a straight sofa can, retain the
